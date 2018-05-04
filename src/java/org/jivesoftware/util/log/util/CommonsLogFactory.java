@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,12 +24,12 @@ import org.slf4j.LoggerFactory;
  * A LogFactory implementation to override the default commons-logging behavior. All log
  * statements are written to the Openfire logs. Info level logging is sent to debug.
  *
- * @Deprecated Openfire uses SLF4J's 'jcl-over-slf4j' instead. See http://www.slf4j.org/legacy.html
+ * @deprecated Openfire uses SLF4J's 'jcl-over-slf4j' instead. See http://www.slf4j.org/legacy.html
  */
 @Deprecated
 public class CommonsLogFactory extends LogFactory {
 
-	private static final Logger Log = LoggerFactory.getLogger(CommonsLogFactory.class);
+    private static final Logger Log = LoggerFactory.getLogger(CommonsLogFactory.class);
 
     private org.apache.commons.logging.Log log;
 
@@ -135,40 +131,40 @@ public class CommonsLogFactory extends LogFactory {
     }
 
     @Override
-	public Object getAttribute(String string) {
+    public Object getAttribute(String string) {
         return null;
     }
 
     @Override
-	public String[] getAttributeNames() {
+    public String[] getAttributeNames() {
         return new String[0];
     }
 
     @Override
-	public org.apache.commons.logging.Log getInstance(Class aClass)
+    public org.apache.commons.logging.Log getInstance(Class aClass)
             throws LogConfigurationException {
         return log;
     }
 
     @Override
-	public org.apache.commons.logging.Log getInstance(String string)
+    public org.apache.commons.logging.Log getInstance(String string)
             throws LogConfigurationException
     {
         return log;
     }
 
     @Override
-	public void release() {
+    public void release() {
 
     }
 
     @Override
-	public void removeAttribute(String string) {
+    public void removeAttribute(String string) {
 
     }
 
     @Override
-	public void setAttribute(String string, Object object) {
+    public void setAttribute(String string, Object object) {
 
     }
 }

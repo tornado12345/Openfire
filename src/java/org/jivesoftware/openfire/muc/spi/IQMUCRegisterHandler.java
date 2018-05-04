@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 1623 $
- * $Date: 2005-07-12 18:40:57 -0300 (Tue, 12 Jul 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +17,6 @@
 package org.jivesoftware.openfire.muc.spi;
 
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
 import org.dom4j.DocumentHelper;
@@ -51,7 +46,7 @@ import org.xmpp.packet.Presence;
  */
 class IQMUCRegisterHandler {
 
-	private static final Logger Log = LoggerFactory.getLogger(IQMUCRegisterHandler.class);
+    private static final Logger Log = LoggerFactory.getLogger(IQMUCRegisterHandler.class);
 
     private static final Element probeResult;
     

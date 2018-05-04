@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,7 +58,7 @@ import org.slf4j.LoggerFactory;
  */
 public class PluginCacheConfigurator {
 
-	private static final Logger Log = LoggerFactory.getLogger(PluginCacheConfigurator.class);
+    private static final Logger Log = LoggerFactory.getLogger(PluginCacheConfigurator.class);
 
     private InputStream configDataStream;
 

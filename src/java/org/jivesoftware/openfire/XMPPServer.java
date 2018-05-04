@@ -1,5 +1,4 @@
-/**
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +50,7 @@ import org.jivesoftware.openfire.session.RemoteSessionLocator;
 import org.jivesoftware.openfire.spi.*;
 import org.jivesoftware.openfire.transport.TransportHandler;
 import org.jivesoftware.openfire.update.UpdateManager;
+import org.jivesoftware.openfire.user.User;
 import org.jivesoftware.openfire.user.UserManager;
 import org.jivesoftware.openfire.vcard.VCardManager;
 import org.jivesoftware.util.*;
@@ -61,8 +61,6 @@ import org.xmpp.packet.JID;
 
 import java.io.*;
 import java.lang.reflect.Method;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -100,14 +98,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 public class XMPPServer {
 
-	private static final Logger logger = LoggerFactory.getLogger(XMPPServer.class);
+    private static final Logger logger = LoggerFactory.getLogger(XMPPServer.class);
 
     private static XMPPServer instance;
 
-    private String name;
-    private String host;
-    private Version version;
-    private Date startDate;
     private boolean initialized = false;
     private boolean started = false;
     private NodeID nodeID;
@@ -189,12 +183,9 @@ public class XMPPServer {
      * @param jid the JID to check.
      * @return true if the address is a local address to this server.
      */
-    public boolean isLocal(JID jid) {
-        boolean local = false;
-        if (jid != null && name != null && name.equals(jid.getDomain())) {
-            local = true;
-        }
-        return local;
+    public boolean isLocal( JID jid )
+    {
+        return jid != null && jid.getDomain().equals( xmppServerInfo.getXMPPDomain() );
     }
 
     /**
@@ -205,13 +196,11 @@ public class XMPPServer {
      * @return true if the given address does not match the local server hostname and does not
      *         match a component service JID.
      */
-    public boolean isRemote(JID jid) {
-        if (jid != null) {
-            if (!name.equals(jid.getDomain()) && !componentManager.hasComponent(jid)) {
-                return true;
-            }
-        }
-        return false;
+    public boolean isRemote( JID jid )
+    {
+        return jid != null
+                && !jid.getDomain().equals( xmppServerInfo.getXMPPDomain() )
+                && !componentManager.hasComponent( jid );
     }
 
     /**
@@ -242,8 +231,11 @@ public class XMPPServer {
      * @param jid the JID to check.
      * @return true if the given address matches a component service JID.
      */
-    public boolean matchesComponent(JID jid) {
-        return jid != null && !name.equals(jid.getDomain()) && componentManager.hasComponent(jid);
+    public boolean matchesComponent( JID jid )
+    {
+        return jid != null
+                && !jid.getDomain().equals( xmppServerInfo.getXMPPDomain() )
+                && componentManager.hasComponent( jid );
     }
 
     /**
@@ -254,7 +246,7 @@ public class XMPPServer {
      * @return an XMPPAddress for the server.
      */
     public JID createJID(String username, String resource) {
-        return new JID(username, name, resource);
+        return new JID(username, xmppServerInfo.getXMPPDomain(), resource);
     }
 
     /**
@@ -267,7 +259,7 @@ public class XMPPServer {
      * @return an XMPPAddress for the server.
      */
     public JID createJID(String username, String resource, boolean skipStringprep) {
-        return new JID(username, name, resource, skipStringprep);
+        return new JID(username, xmppServerInfo.getXMPPDomain(), resource, skipStringprep);
     }
 
     /**
@@ -303,25 +295,12 @@ public class XMPPServer {
     private void initialize() throws FileNotFoundException {
         locateOpenfire();
 
-        startDate = new Date();
-
-        try {
-            host = InetAddress.getLocalHost().getHostName();
-        }
-        catch (UnknownHostException ex) {
-            logger.warn("Unable to determine local hostname.", ex);
-        }
-        if (host == null) {
-            host = "127.0.0.1";        	
-        }
-
-        version = new Version(4, 1, 0, Version.ReleaseStatus.Alpha, -1);
         if ("true".equals(JiveGlobals.getXMLProperty("setup"))) {
             setupMode = false;
         }
 
         if (isStandAlone()) {
-        	logger.info("Registering shutdown hook (standalone mode)");
+            logger.info("Registering shutdown hook (standalone mode)");
             Runtime.getRuntime().addShutdownHook(new ShutdownHookThread());
             TaskEngine.getInstance().schedule(new Terminator(), 1000, 1000);
         }
@@ -336,15 +315,161 @@ public class XMPPServer {
         }
 
         JiveGlobals.migrateProperty("xmpp.domain");
-        name = JiveGlobals.getProperty("xmpp.domain", host).toLowerCase();
+        JiveGlobals.migrateProperty("xmpp.fqdn");
 
         JiveGlobals.migrateProperty(Log.LOG_DEBUG_ENABLED);
         Log.setDebugEnabled(JiveGlobals.getBooleanProperty(Log.LOG_DEBUG_ENABLED, false));
         
         // Update server info
-        xmppServerInfo = new XMPPServerInfoImpl(name, host, version, startDate);
+        xmppServerInfo = new XMPPServerInfoImpl(new Date());
 
         initialized = true;
+
+        if (setupMode && "true".equals(JiveGlobals.getXMLProperty("autosetup.run"))) {
+            this.runAutoSetup();
+            JiveGlobals.deleteXMLProperty("autosetup");
+            JiveGlobals.deleteProperty("autosetup");
+        }
+    }
+
+    void runAutoSetup() {
+        // steps from setup-datasource-standard.jsp
+        // do this first so that other changes persist
+        if ("standard".equals(JiveGlobals.getXMLProperty("autosetup.database.mode"))) {
+            JiveGlobals.setXMLProperty("database.defaultProvider.driver", JiveGlobals.getXMLProperty("autosetup.database.defaultProvider.driver"));
+            JiveGlobals.setXMLProperty("database.defaultProvider.serverURL", JiveGlobals.getXMLProperty("autosetup.database.defaultProvider.serverURL"));
+            JiveGlobals.setXMLProperty("database.defaultProvider.username", JiveGlobals.getXMLProperty("autosetup.database.defaultProvider.username"));
+            JiveGlobals.setXMLProperty("database.defaultProvider.password", JiveGlobals.getXMLProperty("autosetup.database.defaultProvider.password"));
+
+            int minConnections;
+            int maxConnections;
+            double connectionTimeout;
+
+            try {
+                minConnections = Integer.parseInt(
+                    JiveGlobals.getXMLProperty("database.defaultProvider.minConnections"));
+            }
+            catch (Exception e) {
+                minConnections = 5;
+            }
+            try {
+                maxConnections = Integer.parseInt(
+                    JiveGlobals.getXMLProperty("database.defaultProvider.maxConnections"));
+            }
+            catch (Exception e) {
+                maxConnections = 25;
+            }
+            try {
+                connectionTimeout = Double.parseDouble(
+                    JiveGlobals.getXMLProperty("database.defaultProvider.connectionTimeout"));
+            }
+            catch (Exception e) {
+                connectionTimeout = 1.0;
+            }
+
+            JiveGlobals.setXMLProperty("database.defaultProvider.minConnections",
+                Integer.toString(minConnections));
+            JiveGlobals.setXMLProperty("database.defaultProvider.maxConnections",
+                Integer.toString(maxConnections));
+            JiveGlobals.setXMLProperty("database.defaultProvider.connectionTimeout",
+                Double.toString(connectionTimeout));
+        }
+
+        // mark setup as done, so that other things can be written to the DB
+        JiveGlobals.setXMLProperty("setup","true");
+
+        // steps from index.jsp
+        String localeCode = JiveGlobals.getXMLProperty("autosetup.locale");
+        logger.warn("Setting locale to" + localeCode);
+        JiveGlobals.setLocale(LocaleUtils.localeCodeToLocale(localeCode.trim()));
+
+        // steps from setup-host-settings.jsp
+        JiveGlobals.setXMLProperty("xmpp.domain", JiveGlobals.getXMLProperty("autosetup.xmpp.domain"));
+        JiveGlobals.setXMLProperty("xmpp.fqdn", JiveGlobals.getXMLProperty("autosetup.xmpp.fqdn"));
+        JiveGlobals.migrateProperty("xmpp.domain");
+        JiveGlobals.migrateProperty("xmpp.fqdn");
+
+        JiveGlobals.setProperty("xmpp.socket.ssl.active", JiveGlobals.getXMLProperty("autosetup.xmpp.socket.ssl.active", "true"));
+        JiveGlobals.setProperty("xmpp.auth.anonymous", JiveGlobals.getXMLProperty("autosetup.xmpp.auth.anonymous", "false"));
+
+        JiveGlobals.setupPropertyEncryptionAlgorithm(JiveGlobals.getXMLProperty("autosetup.encryption.algorithm", "Blowfish")); // or AES
+        JiveGlobals.setupPropertyEncryptionKey(JiveGlobals.getXMLProperty("autosetup.encryption.key", null));
+
+
+        // steps from setup-profile-settings.jsp
+        if ("default".equals(JiveGlobals.getXMLProperty("autosetup.authprovider.mode", "default"))) {
+            JiveGlobals.setXMLProperty("connectionProvider.className",
+                "org.jivesoftware.database.DefaultConnectionProvider");
+
+            JiveGlobals.setProperty("provider.auth.className", JiveGlobals.getXMLProperty("provider.auth.className",
+                org.jivesoftware.openfire.auth.DefaultAuthProvider.class.getName()));
+            JiveGlobals.setProperty("provider.user.className", JiveGlobals.getXMLProperty("provider.user.className",
+                org.jivesoftware.openfire.user.DefaultUserProvider.class.getName()));
+            JiveGlobals.setProperty("provider.group.className", JiveGlobals.getXMLProperty("provider.group.className",
+                org.jivesoftware.openfire.group.DefaultGroupProvider.class.getName()));
+            JiveGlobals.setProperty("provider.vcard.className", JiveGlobals.getXMLProperty("provider.vcard.className",
+                org.jivesoftware.openfire.vcard.DefaultVCardProvider.class.getName()));
+            JiveGlobals.setProperty("provider.lockout.className", JiveGlobals.getXMLProperty("provider.lockout.className",
+                org.jivesoftware.openfire.lockout.DefaultLockOutProvider.class.getName()));
+            JiveGlobals.setProperty("provider.securityAudit.className", JiveGlobals.getXMLProperty("provider.securityAudit.className",
+                org.jivesoftware.openfire.security.DefaultSecurityAuditProvider.class.getName()));
+            JiveGlobals.setProperty("provider.admin.className", JiveGlobals.getXMLProperty("provider.admin.className",
+                org.jivesoftware.openfire.admin.DefaultAdminProvider.class.getName()));
+
+            // make configurable?
+            JiveGlobals.setProperty("user.scramHashedPasswordOnly", "true");
+        }
+
+        // steps from setup-admin-settings.jsp
+        try {
+            User adminUser = UserManager.getInstance().getUser("admin");
+            adminUser.setPassword(JiveGlobals.getXMLProperty("autosetup.admin.password"));
+            adminUser.setEmail(JiveGlobals.getXMLProperty("autosetup.admin.email"));
+            Date now = new Date();
+            adminUser.setCreationDate(now);
+            adminUser.setModificationDate(now);
+        } catch (Exception e) {
+            e.printStackTrace();
+            logger.warn("There was an unexpected error encountered when "
+                + "setting the new admin information. Please check your error "
+                + "logs and try to remedy the problem.");
+        }
+
+        // finish setup
+        this.finalSetupSteps();
+        setupMode = false;
+    }
+
+    private void finalSetupSteps() {
+        for (String propName : JiveGlobals.getXMLPropertyNames()) {
+            if (JiveGlobals.getProperty(propName) == null) {
+                JiveGlobals.setProperty(propName, JiveGlobals.getXMLProperty(propName));
+            }
+        }
+        // Set default SASL SCRAM-SHA-1 iteration count
+        JiveGlobals.setProperty("sasl.scram-sha-1.iteration-count", Integer.toString(ScramUtils.DEFAULT_ITERATION_COUNT));
+
+        // Check if keystore (that out-of-the-box is a fallback for all keystores) already has certificates for current domain.
+        CertificateStoreManager certificateStoreManager = null; // Will be a module after finishing setup.
+        try {
+            certificateStoreManager = new CertificateStoreManager();
+            certificateStoreManager.initialize( this );
+            certificateStoreManager.start();
+            final IdentityStore identityStore = certificateStoreManager.getIdentityStore( ConnectionType.SOCKET_C2S );
+            identityStore.ensureDomainCertificates( "DSA", "RSA" );
+
+        } catch (Exception e) {
+            logger.error("Error generating self-signed certificates", e);
+        } finally {
+            if (certificateStoreManager != null)
+            {
+                certificateStoreManager.stop();
+                certificateStoreManager.destroy();
+            }
+        }
+
+        // Initialize list of admins now (before we restart Jetty)
+        AdminManager.getInstance().getAdminAccounts();
     }
 
     /**
@@ -356,47 +481,17 @@ public class XMPPServer {
         if (!setupMode) {
             return;
         }
+
+        this.finalSetupSteps();
+
         // Make sure that setup finished correctly.
         if ("true".equals(JiveGlobals.getXMLProperty("setup"))) {
-            // Set the new server domain assigned during the setup process
-            name = JiveGlobals.getProperty("xmpp.domain").toLowerCase();
-            xmppServerInfo.setXMPPDomain(name);
-
             // Iterate through all the provided XML properties and set the ones that haven't
             // already been touched by setup prior to this method being called.
-            for (String propName : JiveGlobals.getXMLPropertyNames()) {
-                if (JiveGlobals.getProperty(propName) == null) {
-                    JiveGlobals.setProperty(propName, JiveGlobals.getXMLProperty(propName));
-                }
-            }
-            // Set default SASL SCRAM-SHA-1 iteration count
-            JiveGlobals.setProperty("sasl.scram-sha-1.iteration-count", Integer.toString(ScramUtils.DEFAULT_ITERATION_COUNT));
-
-            // Check if keystore (that out-of-the-box is a fallback for all keystores) already has certificates for current domain.
-            CertificateStoreManager certificateStoreManager = null; // Will be a module after finishing setup.
-            try {
-                certificateStoreManager = new CertificateStoreManager();
-                certificateStoreManager.initialize( this );
-                certificateStoreManager.start();
-                final IdentityStore identityStore = certificateStoreManager.getIdentityStore( ConnectionType.SOCKET_C2S );
-                identityStore.ensureDomainCertificates( "DSA", "RSA" );
-
-            } catch (Exception e) {
-                logger.error("Error generating self-signed certificates", e);
-            } finally {
-                if (certificateStoreManager != null)
-                {
-                    certificateStoreManager.stop();
-                    certificateStoreManager.destroy();
-                }
-            }
-
-            // Initialize list of admins now (before we restart Jetty)
-            AdminManager.getInstance().getAdminAccounts();
 
             Thread finishSetup = new Thread() {
                 @Override
-				public void run() {
+                public void run() {
                     try {
                         if (isStandAlone()) {
                             // Always restart the HTTP server manager. This covers the case
@@ -461,7 +556,7 @@ public class XMPPServer {
             pluginManager.start();
 
             // Log that the server has been started
-            String startupBanner = LocaleUtils.getLocalizedString("short.title") + " " + version.getVersionString() +
+            String startupBanner = LocaleUtils.getLocalizedString("short.title") + " " + xmppServerInfo.getVersion().getVersionString() +
                     " [" + JiveGlobals.formatDateTime(new Date()) + "]";
             logger.info(startupBanner);
             System.out.println(startupBanner);
@@ -481,7 +576,7 @@ public class XMPPServer {
         }
     }
 
-	private void loadModules() {
+    private void loadModules() {
         // Load boot modules
         loadModule(RoutingTableImpl.class.getName());
         loadModule(AuditManagerImpl.class.getName());
@@ -572,6 +667,33 @@ public class XMPPServer {
                 logger.error(LocaleUtils.getLocalizedString("admin.error"), e);
             }
         }
+
+        // Register modules with service discovery provides where applicable.
+        for (Module module : modules.values() )
+        {
+            // Service discovery info
+            if (module instanceof ServerFeaturesProvider) {
+                getIQDiscoInfoHandler().addServerFeaturesProvider( (ServerFeaturesProvider) module );
+            }
+
+            if (module instanceof ServerIdentitiesProvider) {
+                getIQDiscoInfoHandler().addServerIdentitiesProvider( (ServerIdentitiesProvider) module );
+            }
+
+            if (module instanceof UserIdentitiesProvider) {
+                getIQDiscoInfoHandler().addUserIdentitiesProvider( (UserIdentitiesProvider) module );
+            }
+
+            // Service discovery items
+            if (module instanceof ServerItemsProvider) {
+                getIQDiscoItemsHandler().addServerItemsProvider( (ServerItemsProvider) module );
+            }
+
+            if (module instanceof UserItemsProvider) {
+                getIQDiscoItemsHandler().addUserItemsProvider( (UserItemsProvider) module);
+            }
+        }
+
     }
 
     /**
@@ -617,7 +739,7 @@ public class XMPPServer {
     public void restartHTTPServer() {
         Thread restartThread = new Thread() {
             @Override
-			public void run() {
+            public void run() {
                 if (isStandAlone()) {
                     // Restart the HTTP server manager. This covers the case
                     // of changing the ports, as well as generating self-signed certificates.
@@ -643,7 +765,7 @@ public class XMPPServer {
      * inside of another server.
      */
     public void stop() {
-    	logger.info("Initiating shutdown ...");
+        logger.info("Initiating shutdown ...");
         // Only do a system exit if we're running standalone
         if (isStandAlone()) {
             // if we're in a wrapper, we have to tell the wrapper to shut us down
@@ -832,19 +954,19 @@ public class XMPPServer {
      * via the launcher, especially in Windows.
      */
     private class Terminator extends TimerTask {
-    	private BufferedReader stdin = new BufferedReader(new InputStreamReader(System.in));
-    	@Override
-    	public void run() {
-        	try { 
-        		if (stdin.ready()) {
-            		if (EXIT.equalsIgnoreCase(stdin.readLine())) {
-            			System.exit(0); // invokes shutdown hook(s)
-            		}
-        		}
-        	} catch (IOException ioe) {
-        		logger.error("Error reading console input", ioe);
-        	}
-    	}
+        private BufferedReader stdin = new BufferedReader(new InputStreamReader(System.in));
+        @Override
+        public void run() {
+            try { 
+                if (stdin.ready()) {
+                    if (EXIT.equalsIgnoreCase(stdin.readLine())) {
+                        System.exit(0); // invokes shutdown hook(s)
+                    }
+                }
+            } catch (IOException ioe) {
+                logger.error("Error reading console input", ioe);
+            }
+        }
     }
     
     /**
@@ -860,7 +982,7 @@ public class XMPPServer {
          * <p>Logs the server shutdown.</p>
          */
         @Override
-		public void run() {
+        public void run() {
             shutdownServer();
             logger.info("Server halted");
             System.err.println("Server halted");
@@ -880,7 +1002,7 @@ public class XMPPServer {
          * <p>Shuts down the JVM after a 5 second delay.</p>
          */
         @Override
-		public void run() {
+        public void run() {
             try {
                 Thread.sleep(5000);
                 // No matter what, we make sure it's dead
@@ -901,41 +1023,41 @@ public class XMPPServer {
         ClusterManager.shutdown();
         // Notify server listeners that the server is about to be stopped
         for (XMPPServerListener listener : listeners) {
-        	try {
-        		listener.serverStopping();
-        	} catch (Exception ex) {
-        		logger.error("Exception during listener shutdown", ex);
-        	}
+            try {
+                listener.serverStopping();
+            } catch (Exception ex) {
+                logger.error("Exception during listener shutdown", ex);
+            }
         }
         // If we don't have modules then the server has already been shutdown
         if (modules.isEmpty()) {
             return;
         }
-    	logger.info("Shutting down " + modules.size() + " modules ...");
+        logger.info("Shutting down " + modules.size() + " modules ...");
         // Get all modules and stop and destroy them
         for (Module module : modules.values()) {
-        	try {
-	            module.stop();
-	            module.destroy();
-        	} catch (Exception ex) {
-        		logger.error("Exception during module shutdown", ex);
-        	}
+            try {
+                module.stop();
+                module.destroy();
+            } catch (Exception ex) {
+                logger.error("Exception during module shutdown", ex);
+            }
         }
         // Stop all plugins
-    	logger.info("Shutting down plugins ...");
+        logger.info("Shutting down plugins ...");
         if (pluginManager != null) {
-        	try {
-        		pluginManager.shutdown();
-        	} catch (Exception ex) {
-        		logger.error("Exception during plugin shutdown", ex);
-        	}
+            try {
+                pluginManager.shutdown();
+            } catch (Exception ex) {
+                logger.error("Exception during plugin shutdown", ex);
+            }
         }
         modules.clear();
         // Stop the Db connection manager.
         try {	
-        	DbConnectionManager.destroyConnectionProvider();
+            DbConnectionManager.destroyConnectionProvider();
         } catch (Exception ex) {
-    		logger.error("Exception during DB shutdown", ex);
+            logger.error("Exception during DB shutdown", ex);
         }
 
         // Shutdown the task engine.
@@ -1235,7 +1357,9 @@ public class XMPPServer {
      * Returns a list with all the modules that provide "discoverable" features.
      *
      * @return a list with all the modules that provide "discoverable" features.
+     * @deprecated Use {@link IQDiscoInfoHandler} instead.
      */
+    @Deprecated
     public List<ServerFeaturesProvider> getServerFeaturesProviders() {
         List<ServerFeaturesProvider> answer = new ArrayList<>();
         for (Module module : modules.values()) {
@@ -1245,12 +1369,14 @@ public class XMPPServer {
         }
         return answer;
     }
- 
+
     /**
      * Returns a list with all the modules that provide "discoverable" identities.
      *
      * @return a list with all the modules that provide "discoverable" identities.
+     * @deprecated Use {@link IQDiscoInfoHandler} instead.
      */
+    @Deprecated
     public List<ServerIdentitiesProvider> getServerIdentitiesProviders() {
         List<ServerIdentitiesProvider> answer = new ArrayList<>();
         for (Module module : modules.values()) {
@@ -1267,7 +1393,9 @@ public class XMPPServer {
      *
      * @return a list with all the modules that provide "discoverable" items associated with
      *         the server.
+     * @deprecated Use {@link IQDiscoItemsHandler} instead.
      */
+    @Deprecated
     public List<ServerItemsProvider> getServerItemsProviders() {
         List<ServerItemsProvider> answer = new ArrayList<>();
         for (Module module : modules.values()) {
@@ -1277,12 +1405,14 @@ public class XMPPServer {
         }
         return answer;
     }
-    
+
     /**
      * Returns a list with all the modules that provide "discoverable" user identities.
      *
      * @return a list with all the modules that provide "discoverable" user identities.
+     * @deprecated Use {@link IQDiscoInfoHandler} instead.
      */
+    @Deprecated
     public List<UserIdentitiesProvider> getUserIdentitiesProviders() {
         List<UserIdentitiesProvider> answer = new ArrayList<>();
         for (Module module : modules.values()) {
@@ -1299,7 +1429,9 @@ public class XMPPServer {
      *
      * @return a list with all the modules that provide "discoverable" items associated with
      *         users.
+     * @deprecated Use {@link IQDiscoInfoHandler} instead.
      */
+    @Deprecated
     public List<UserItemsProvider> getUserItemsProviders() {
         List<UserItemsProvider> answer = new ArrayList<>();
         for (Module module : modules.values()) {

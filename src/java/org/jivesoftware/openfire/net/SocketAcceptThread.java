@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 1583 $
- * $Date: 2005-07-03 17:55:39 -0300 (Sun, 03 Jul 2005) $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,8 +16,6 @@
 
 package org.jivesoftware.openfire.net;
 
-import org.jivesoftware.util.JiveGlobals;
-import org.jivesoftware.openfire.ConnectionManager;
 import org.jivesoftware.openfire.ServerPort;
 
 import java.io.IOException;
@@ -88,7 +82,7 @@ public class SocketAcceptThread extends Thread {
      * call getting sockets and handing them to the SocketManager.
      */
     @Override
-	public void run() {
+    public void run() {
         acceptingMode.run();
         // We stopped accepting new connections so close the listener
         shutdown();

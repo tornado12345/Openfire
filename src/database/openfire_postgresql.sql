@@ -1,5 +1,3 @@
--- $Revision: 1650 $
--- $Date: 2005-07-20 00:18:17 -0300 (Wed, 20 Jul 2005) $
 
 -- Note: This schema has only been tested on PostgreSQL 7.3.2.
 
@@ -37,15 +35,6 @@ CREATE TABLE ofUserFlag (
 );
 CREATE INDEX ofUserFlag_sTime_idx ON ofUserFlag (startTime);
 CREATE INDEX ofUserFlag_eTime_idx ON ofUserFlag (endTime);
-
-
-CREATE TABLE ofPrivate (
-  username              VARCHAR(64)     NOT NULL,
-  name                  VARCHAR(100)    NOT NULL,
-  namespace             VARCHAR(200)    NOT NULL,
-  privateData           TEXT            NOT NULL,
-  CONSTRAINT ofPrivate_pk PRIMARY KEY (username, name, namespace)
-);
 
 
 CREATE TABLE ofOffline (
@@ -130,6 +119,7 @@ CREATE TABLE ofID (
 CREATE TABLE ofProperty (
   name        VARCHAR(100) NOT NULL,
   propValue   VARCHAR(4000) NOT NULL,
+  encrypted   INTEGER,
   CONSTRAINT ofProperty_pk PRIMARY KEY (name)
 );
 
@@ -258,13 +248,17 @@ CREATE TABLE ofMucMember (
 
 CREATE TABLE ofMucConversationLog (
   roomID              INTEGER        NOT NULL,
+  messageID              INTEGER        NOT NULL,
   sender              VARCHAR(1024)  NOT NULL,
   nickname            VARCHAR(255)   NULL,
   logTime             CHAR(15)       NOT NULL,
   subject             VARCHAR(255)   NULL,
-  body                TEXT           NULL
+  body                TEXT           NULL,
+  stanza                TEXT           NULL
 );
 CREATE INDEX ofMucConversationLog_time_idx ON ofMucConversationLog (logTime);
+CREATE INDEX ofMucConversationLog_msg_id ON ofMucConversationLog (messageID);
+
 
 -- PubSub Tables
 
@@ -382,7 +376,7 @@ INSERT INTO ofID (idType, id) VALUES (19, 1);
 INSERT INTO ofID (idType, id) VALUES (23, 1);
 INSERT INTO ofID (idType, id) VALUES (26, 2);
 
-INSERT INTO ofVersion (name, version) VALUES ('openfire', 23);
+INSERT INTO ofVersion (name, version) VALUES ('openfire', 28);
 
 -- Entry for admin user
 INSERT INTO ofUser (username, plainPassword, name, email, creationDate, modificationDate)

@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2004-2009 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -136,7 +136,7 @@ public abstract class MUCEventDelegate {
                 String jids[] = property.split(",");
                 for (String jid : jids) {
                     if (jid != null && jid.trim().length() != 0) {
-                	    room.addFirstOwner(new JID(jid.trim().toLowerCase()).asBareJID());
+                        room.addFirstOwner(new JID(jid.trim().toLowerCase()).asBareJID());
                     }
                 }
             }

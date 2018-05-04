@@ -1,8 +1,4 @@
-/**
- * $RCSfile: IQDiscoInfoHandler.java,v $
- * $Revision: 2859 $
- * $Date: 2005-09-22 02:30:39 -0300 (Thu, 22 Sep 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +32,7 @@ import org.jivesoftware.util.JiveGlobals;
 import org.jivesoftware.util.cache.Cache;
 import org.jivesoftware.util.cache.CacheFactory;
 import org.xmpp.forms.DataForm;
+import org.xmpp.forms.FormField;
 import org.xmpp.packet.IQ;
 import org.xmpp.packet.JID;
 import org.xmpp.packet.PacketError;
@@ -69,38 +66,54 @@ import java.util.concurrent.locks.Lock;
 public class IQDiscoInfoHandler extends IQHandler implements ClusterEventListener {
 
     public static final String NAMESPACE_DISCO_INFO = "http://jabber.org/protocol/disco#info";
-	private Map<String, DiscoInfoProvider> entities = new HashMap<>();
+    private Map<String, DiscoInfoProvider> entities = new HashMap<>();
     private Set<String> localServerFeatures = new CopyOnWriteArraySet<>();
     private Cache<String, Set<NodeID>> serverFeatures;
-    private List<Element> serverIdentities = new ArrayList<>();
+    private List<ServerIdentitiesProvider> serverIdentityProviders = new ArrayList<>();
     private Map<String, DiscoInfoProvider> serverNodeProviders = new ConcurrentHashMap<>();
     private IQHandlerInfo info;
 
-    private List<Element> anonymousUserIdentities = new ArrayList<>();
-    private List<Element> registeredUserIdentities = new ArrayList<>();
+    private List<UserIdentitiesProvider> anonymousUserIdentityProviders = new ArrayList<>();
+    private List<UserIdentitiesProvider> registeredUserIdentityProviders = new ArrayList<>();
 
     public IQDiscoInfoHandler() {
         super("XMPP Disco Info Handler");
         info = new IQHandlerInfo("query", NAMESPACE_DISCO_INFO);
-        // Initialize the user identity and features collections (optimization to avoid creating
-        // the same objects for each response)
-        Element userIdentity = DocumentHelper.createElement("identity");
-        userIdentity.addAttribute("category", "account");
-        userIdentity.addAttribute("type", "anonymous");
-        anonymousUserIdentities.add(userIdentity);
-        userIdentity = DocumentHelper.createElement("identity");
-        userIdentity.addAttribute("category", "account");
-        userIdentity.addAttribute("type", "registered");
-        registeredUserIdentities.add(userIdentity);
+
+        anonymousUserIdentityProviders.add( new UserIdentitiesProvider()
+        {
+            @Override
+            public Iterator<Element> getIdentities()
+            {
+                final Element userIdentity = DocumentHelper.createElement( "identity" );
+                userIdentity.addAttribute( "category", "account" );
+                userIdentity.addAttribute( "type", "anonymous" );
+
+                return Collections.singleton( userIdentity ).iterator();
+            }
+        } );
+
+        registeredUserIdentityProviders.add( new UserIdentitiesProvider()
+        {
+            @Override
+            public Iterator<Element> getIdentities()
+            {
+                final Element userIdentity = DocumentHelper.createElement( "identity" );
+                userIdentity.addAttribute( "category", "account" );
+                userIdentity.addAttribute( "type", "registered" );
+
+                return Collections.singleton( userIdentity ).iterator();
+            }
+        } );
     }
 
     @Override
-	public IQHandlerInfo getInfo() {
+    public IQHandlerInfo getInfo() {
         return info;
     }
 
     @Override
-	public IQ handleIQ(IQ packet) {
+    public IQ handleIQ(IQ packet) {
         // Create a copy of the sent pack that will be used as the reply
         // we only need to add the requested info to the reply if any otherwise add 
         // a not found error
@@ -142,32 +155,32 @@ public class IQDiscoInfoHandler extends IQHandler implements ClusterEventListene
                 boolean hasDiscoInfoFeature = false;
                 boolean hasDiscoItemsFeature = false;
                 boolean hasResultSetManagementFeature = false;
-                
+
                 while (features.hasNext()) {
-					final String feature = features.next();
-					queryElement.addElement("feature").addAttribute("var", feature);
-					if (feature.equals(NAMESPACE_DISCO_INFO)) {
-						hasDiscoInfoFeature = true;
-					} else if (feature.equals("http://jabber.org/protocol/disco#items")) {
-						hasDiscoItemsFeature = true;
-					} else if (feature.equals(ResultSet.NAMESPACE_RESULT_SET_MANAGEMENT)) {
-						hasResultSetManagementFeature = true;
-					}
+                    final String feature = features.next();
+                    queryElement.addElement("feature").addAttribute("var", feature);
+                    if (feature.equals(NAMESPACE_DISCO_INFO)) {
+                        hasDiscoInfoFeature = true;
+                    } else if (feature.equals("http://jabber.org/protocol/disco#items")) {
+                        hasDiscoItemsFeature = true;
+                    } else if (feature.equals(ResultSet.NAMESPACE_RESULT_SET_MANAGEMENT)) {
+                        hasResultSetManagementFeature = true;
+                    }
                 }
 
-				if (hasDiscoItemsFeature && !hasResultSetManagementFeature) {
-					// IQDiscoItemsHandler provides result set management
-					// support.
-					queryElement.addElement("feature").addAttribute("var",
-							ResultSet.NAMESPACE_RESULT_SET_MANAGEMENT);
-				}
-                
+                if (hasDiscoItemsFeature && !hasResultSetManagementFeature) {
+                    // IQDiscoItemsHandler provides result set management
+                    // support.
+                    queryElement.addElement("feature").addAttribute("var",
+                            ResultSet.NAMESPACE_RESULT_SET_MANAGEMENT);
+                }
+
                 if (!hasDiscoInfoFeature) {
-					// XEP-0030 requires that every entity that supports service
-					// discovery broadcasts the disco#info feature.
-					queryElement.addElement("feature").addAttribute("var", NAMESPACE_DISCO_INFO);
-				}
-                
+                    // XEP-0030 requires that every entity that supports service
+                    // discovery broadcasts the disco#info feature.
+                    queryElement.addElement("feature").addAttribute("var", NAMESPACE_DISCO_INFO);
+                }
+
                 // Add to the reply the extended info (XDataForm) provided by the DiscoInfoProvider
                 DataForm dataForm = infoProvider.getExtendedInfo(name, node, packet.getFrom());
                 if (dataForm != null) {
@@ -254,10 +267,63 @@ public class IQDiscoInfoHandler extends IQHandler implements ClusterEventListene
      *
      * @param provider the ServerFeaturesProvider that provides new server features.
      */
-    private void addServerFeaturesProvider(ServerFeaturesProvider provider) {
+    public void addServerFeaturesProvider(ServerFeaturesProvider provider) {
         for (Iterator<String> it = provider.getFeatures(); it.hasNext();) {
             addServerFeature(it.next());
         }
+    }
+
+    /**
+     * Adds the "discoverable" identities provided by the provider whenever a disco for info is made against the server.
+     *
+     * @param provider The provider of identities.
+     */
+    public void addServerIdentitiesProvider(ServerIdentitiesProvider provider) {
+        if ( provider == null )
+        {
+            throw new NullPointerException( "Argument 'provider' cannot be null." );
+        }
+        serverIdentityProviders.add( provider );
+    }
+
+    /**
+     * Removes this provider of identities.
+     *
+     * @param provider The provider of identities.
+     */
+    public void removeServerIdentitiesProvider(ServerIdentitiesProvider provider) {
+        if ( provider == null )
+        {
+            throw new NullPointerException( "Argument 'provider' cannot be null." );
+        }
+        serverIdentityProviders.remove( provider );
+    }
+
+    /**
+     * Adds the "discoverable" user identities provided by the provider whenever a disco for info is made against users
+     * of the server.
+     *
+     * @param provider The provider of user identities.
+     */
+    public void addUserIdentitiesProvider(UserIdentitiesProvider provider) {
+        if ( provider == null )
+        {
+            throw new NullPointerException( "Argument 'provider' cannot be null." );
+        }
+        registeredUserIdentityProviders.add( provider );
+    }
+
+    /**
+     * Removes this provider of user identities.
+     *
+     * @param provider The provider of identities.
+     */
+    public void removeUserIdentitiesProvider(UserIdentitiesProvider provider) {
+        if ( provider == null )
+        {
+            throw new NullPointerException( "Argument 'provider' cannot be null." );
+        }
+        registeredUserIdentityProviders.remove( provider );
     }
 
     /**
@@ -313,30 +379,10 @@ public class IQDiscoInfoHandler extends IQHandler implements ClusterEventListene
     }
 
     @Override
-	public void initialize(XMPPServer server) {
+    public void initialize(XMPPServer server) {
         super.initialize(server);
         serverFeatures = CacheFactory.createCache("Disco Server Features");
         addServerFeature(NAMESPACE_DISCO_INFO);
-        // Track the implementors of ServerFeaturesProvider so that we can collect the features
-        // provided by the server
-        for (ServerFeaturesProvider provider : server.getServerFeaturesProviders()) {
-            addServerFeaturesProvider(provider);
-        }
-        // Collect the implementors of ServerIdentitiesProvider so that we can collect the identities
-        // for protocols supported by the server
-        for (ServerIdentitiesProvider provider : server.getServerIdentitiesProviders()) {
-            for (Iterator<Element> it = provider.getIdentities(); it.hasNext();) {
-                serverIdentities.add(it.next());
-            }
-        }
-        // Collect the implementors of UserIdentitiesProvider so that we can collect identities
-        // for registered users.
-        for (UserIdentitiesProvider provider : server.getUserIdentitiesProviders()) {
-            for (Iterator<Element> it = provider.getIdentities(); it.hasNext();) {
-                registeredUserIdentities.add(it.next());
-            }
-        }
-
         setProvider(server.getServerInfo().getXMPPDomain(), getServerInfoProvider());
         // Listen to cluster events
         ClusterManager.addListener(this);
@@ -418,7 +464,6 @@ public class IQDiscoInfoHandler extends IQHandler implements ClusterEventListene
      */
     private DiscoInfoProvider getServerInfoProvider() {
         return new DiscoInfoProvider() {
-            final ArrayList<Element> identities = new ArrayList<>();
 
             @Override
             public Iterator<Element> getIdentities(String name, String node, JID senderJID) {
@@ -426,35 +471,56 @@ public class IQDiscoInfoHandler extends IQHandler implements ClusterEventListene
                     // Redirect the request to the disco info provider of the specified node
                     return serverNodeProviders.get(node).getIdentities(name, node, senderJID);
                 }
-                if (name != null && name.equals(XMPPServer.getInstance().getServerInfo().getXMPPDomain())) {
+                if (name == null || name.equals(XMPPServer.getInstance().getServerInfo().getXMPPDomain())) {
                     // Answer identity of the server
-                    synchronized (identities) {
-                        if (identities.isEmpty()) {
-                            Element identity = DocumentHelper.createElement("identity");
-                            identity.addAttribute("category", "server");
-                            identity.addAttribute("name", JiveGlobals.getProperty(
-                                    "xmpp.server.name", "Openfire Server"));
-                            identity.addAttribute("type", "im");
+                    final ArrayList<Element> identities = new ArrayList<>();
+                    final Element identity = DocumentHelper.createElement("identity");
+                    identity.addAttribute("category", "server");
+                    identity.addAttribute("name", JiveGlobals.getProperty("xmpp.server.name", "Openfire Server"));
+                    identity.addAttribute("type", "im");
+                    identities.add(identity);
 
-                            identities.add(identity);
-                            
-                            // Include identities from modules that implement ServerIdentitiesProvider
-                            for (Element identityElement : serverIdentities) {
-                                identities.add(identityElement);
-                            }
+                    // Include identities from modules that implement ServerIdentitiesProvider
+                    for (ServerIdentitiesProvider provider : serverIdentityProviders )
+                    {
+                        final Iterator<Element> iterator = provider.getIdentities();
+                        while ( iterator.hasNext() )
+                        {
+                            identities.add( iterator.next() );
                         }
                     }
                     return identities.iterator();
                 }
+                else if (node != null) {
+                    return XMPPServer.getInstance().getIQPEPHandler().getIdentities(name, node, senderJID);
+                }
                 else {
                     if (SessionManager.getInstance().isAnonymousRoute(name)) {
                         // Answer identity of an anonymous user.
-                        return anonymousUserIdentities.iterator();
+                        final Set<Element> result = new HashSet<>();
+                        for ( final UserIdentitiesProvider provider : anonymousUserIdentityProviders )
+                        {
+                            final Iterator<Element> identities = provider.getIdentities();
+                            while ( identities.hasNext() )
+                            {
+                                result.add( identities.next() );
+                            }
+                        }
+                        return result.iterator();
                     }
                     else {
                         // Answer identity of a registered user.
                         // Note: We know that this user exists because #hasInfo returned true
-                        return registeredUserIdentities.iterator();
+                        final Set<Element> result = new HashSet<>();
+                        for ( final UserIdentitiesProvider provider : registeredUserIdentityProviders )
+                        {
+                            final Iterator<Element> identities = provider.getIdentities();
+                            while ( identities.hasNext() )
+                            {
+                                result.add( identities.next() );
+                            }
+                        }
+                        return result.iterator();
                     }
                 }
             }
@@ -464,6 +530,9 @@ public class IQDiscoInfoHandler extends IQHandler implements ClusterEventListene
                 if (node != null && serverNodeProviders.get(node) != null) {
                     // Redirect the request to the disco info provider of the specified node
                     return serverNodeProviders.get(node).getFeatures(name, node, senderJID);
+                }
+                if (node != null && name != null) {
+                    return XMPPServer.getInstance().getIQPEPHandler().getFeatures(name, node, senderJID);
                 }
                 // Answer features of the server
                 return new HashSet<>(serverFeatures.keySet()).iterator();
@@ -476,14 +545,24 @@ public class IQDiscoInfoHandler extends IQHandler implements ClusterEventListene
                         // Redirect the request to the disco info provider of the specified node
                         return serverNodeProviders.get(node).hasInfo(name, node, senderJID);
                     }
+                    if (name != null) {
+                        return XMPPServer.getInstance().getIQPEPHandler().hasInfo(name, node, senderJID);
+                    }
                     // Unknown node
                     return false;
                 }
                 try {
                     // True if it is an info request of the server, a registered user or an
                     // anonymous user. We now support disco of user's bare JIDs
-                    return name == null || UserManager.getInstance().getUser(name) != null ||
-                            SessionManager.getInstance().isAnonymousRoute(name);
+                    if (name == null) return true;
+                    if (UserManager.getInstance().getUser(name) != null ||
+                            SessionManager.getInstance().isAnonymousRoute(name)) {
+                        if (node == null) {
+                            return true;
+                        }
+                        return XMPPServer.getInstance().getIQPEPHandler().hasInfo(name, node, senderJID);
+                    }
+                    return false;
                 }
                 catch (UserNotFoundException e) {
                     return false;
@@ -495,6 +574,53 @@ public class IQDiscoInfoHandler extends IQHandler implements ClusterEventListene
                 if (node != null && serverNodeProviders.get(node) != null) {
                     // Redirect the request to the disco info provider of the specified node
                     return serverNodeProviders.get(node).getExtendedInfo(name, node, senderJID);
+                }
+                if (name == null || name.equals(XMPPServer.getInstance().getServerInfo().getXMPPDomain())) {
+                    // Answer extended info of the server itself.
+
+                    // XEP-0157 Contact addresses for XMPP Services
+                    if ( !JiveGlobals.getBooleanProperty( "admin.disable-exposure" ) )
+                    {
+                        final Collection<JID> admins = XMPPServer.getInstance().getAdmins();
+                        if ( admins == null || admins.isEmpty() )
+                        {
+                            return null;
+                        }
+
+                        final DataForm dataForm = new DataForm(DataForm.Type.result);
+
+                        final FormField fieldType = dataForm.addField();
+                        fieldType.setVariable("FORM_TYPE");
+                        fieldType.setType(FormField.Type.hidden);
+                        fieldType.addValue("http://jabber.org/network/serverinfo");
+
+                        final FormField fieldAdminAddresses = dataForm.addField();
+                        fieldAdminAddresses.setVariable("admin-addresses");
+
+                        final UserManager userManager = UserManager.getInstance();
+                        for ( final JID admin : admins )
+                        {
+                            fieldAdminAddresses.addValue( "xmpp:" + admin.asBareJID() );
+                            if ( admin.getDomain().equals( XMPPServer.getInstance().getServerInfo().getXMPPDomain() ) )
+                            try
+                            {
+                                final String email = userManager.getUser( admin.getNode() ).getEmail();
+                                if ( email != null && !email.trim().isEmpty() )
+                                {
+                                    fieldAdminAddresses.addValue( "mailto:" + email );
+                                }
+                            }
+                            catch (Exception e)
+                            {
+                                continue;
+                            }
+                        }
+
+                        return dataForm;
+                    }
+                }
+                if (node != null && name != null) {
+                    return XMPPServer.getInstance().getIQPEPHandler().getExtendedInfo(name, node, senderJID);
                 }
                 return null;
             }

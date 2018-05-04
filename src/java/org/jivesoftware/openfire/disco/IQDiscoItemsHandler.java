@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 1701 $
- * $Date: 2005-07-26 02:23:45 -0300 (Tue, 26 Jul 2005) $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -86,6 +82,7 @@ public class IQDiscoItemsHandler extends IQHandler implements ServerFeaturesProv
     private Map<String, DiscoItemsProvider> serverNodeProviders = new ConcurrentHashMap<>();
     private IQHandlerInfo info;
     private IQDiscoInfoHandler infoHandler;
+    private List<UserItemsProvider> userItemsProviders = new ArrayList<>();
 
     public IQDiscoItemsHandler() {
         super("XMPP Disco Items Handler");
@@ -93,12 +90,12 @@ public class IQDiscoItemsHandler extends IQHandler implements ServerFeaturesProv
     }
 
     @Override
-	public IQHandlerInfo getInfo() {
+    public IQHandlerInfo getInfo() {
         return info;
     }
 
     @Override
-	public IQ handleIQ(IQ packet) {
+    public IQ handleIQ(IQ packet) {
         // Create a copy of the sent pack that will be used as the reply
         // we only need to add the requested items to the reply if any otherwise add 
         // a not found error
@@ -115,8 +112,14 @@ public class IQDiscoItemsHandler extends IQHandler implements ServerFeaturesProv
         // We consider the host of the recipient JID of the packet as the entity. It's the 
         // DiscoItemsProvider responsibility to provide the items associated with the JID's name  
         // together with any possible requested node.
-        DiscoItemsProvider itemsProvider = getProvider(packet.getTo() == null ?
-                packet.getFrom().getNode() : packet.getTo().getNode() != null ? packet.getTo().getNode() : packet.getTo().getDomain());
+        DiscoItemsProvider itemsProvider = null;
+        
+        if((packet.getTo() == null) || (packet.getTo().asBareJID().equals(packet.getFrom().asBareJID()))) {
+            itemsProvider = getProvider(XMPPServer.getInstance().getServerInfo().getXMPPDomain());
+        } else {
+            itemsProvider = getProvider(packet.getTo().getDomain());
+        }
+
         if (itemsProvider != null) {
             // Get the JID's name
             String name = packet.getTo() == null ? null : packet.getTo().getNode();
@@ -133,63 +136,63 @@ public class IQDiscoItemsHandler extends IQHandler implements ServerFeaturesProv
                 reply.setChildElement(iq.createCopy());
                 Element queryElement = reply.getChildElement();
 
-				// See if the requesting entity would like to apply 'result set
-				// management'
-				final Element rsmElement = packet.getChildElement().element(
-						QName.get("set",
-								ResultSet.NAMESPACE_RESULT_SET_MANAGEMENT));
+                // See if the requesting entity would like to apply 'result set
+                // management'
+                final Element rsmElement = packet.getChildElement().element(
+                        QName.get("set",
+                                ResultSet.NAMESPACE_RESULT_SET_MANAGEMENT));
 
-				// apply RSM only if the element exists, and the (total) results
-				// set is not empty.
-				final boolean applyRSM = rsmElement != null
-						&& itemsItr.hasNext();
+                // apply RSM only if the element exists, and the (total) results
+                // set is not empty.
+                final boolean applyRSM = rsmElement != null
+                        && itemsItr.hasNext();
 
-				if (applyRSM) {
-					if (!ResultSet.isValidRSMRequest(rsmElement))
-					{
-						reply.setError(PacketError.Condition.bad_request);
-						return reply;
-					}
-					
-					// Calculate which results to include.
-					final List<DiscoItem> rsmResults;
-					final List<DiscoItem> allItems = new ArrayList<>();
-					while (itemsItr.hasNext()) {
-						allItems.add(itemsItr.next());
-					}
-					final ResultSet<DiscoItem> rs = new ResultSetImpl<>(
-							allItems);
-					try {
-						rsmResults = rs.applyRSMDirectives(rsmElement);
-					} catch (NullPointerException e) {
-						final IQ itemNotFound = IQ.createResultIQ(packet);
-						itemNotFound.setError(PacketError.Condition.item_not_found);
-						return itemNotFound;
-					}
+                if (applyRSM) {
+                    if (!ResultSet.isValidRSMRequest(rsmElement))
+                    {
+                        reply.setError(PacketError.Condition.bad_request);
+                        return reply;
+                    }
+                    
+                    // Calculate which results to include.
+                    final List<DiscoItem> rsmResults;
+                    final List<DiscoItem> allItems = new ArrayList<>();
+                    while (itemsItr.hasNext()) {
+                        allItems.add(itemsItr.next());
+                    }
+                    final ResultSet<DiscoItem> rs = new ResultSetImpl<>(
+                            allItems);
+                    try {
+                        rsmResults = rs.applyRSMDirectives(rsmElement);
+                    } catch (NullPointerException e) {
+                        final IQ itemNotFound = IQ.createResultIQ(packet);
+                        itemNotFound.setError(PacketError.Condition.item_not_found);
+                        return itemNotFound;
+                    }
 
-					// add the applicable results to the IQ-result
-					for (DiscoItem item : rsmResults) {
-						final Element resultElement = item.getElement();
-						resultElement.setQName(new QName(resultElement
-								.getName(), queryElement.getNamespace()));
-						queryElement.add(resultElement.createCopy());
-					}
+                    // add the applicable results to the IQ-result
+                    for (DiscoItem item : rsmResults) {
+                        final Element resultElement = item.getElement();
+                        resultElement.setQName(new QName(resultElement
+                                .getName(), queryElement.getNamespace()));
+                        queryElement.add(resultElement.createCopy());
+                    }
 
-					// overwrite the 'set' element.
-					queryElement.remove(queryElement.element(
-							QName.get("set",
-									ResultSet.NAMESPACE_RESULT_SET_MANAGEMENT)));
-					queryElement.add(rs.generateSetElementFromResults(rsmResults));
-				} else {
-					// don't apply RSM:
-	                // Add to the reply all the items provided by the DiscoItemsProvider
-	                Element item;
-	                while (itemsItr.hasNext()) {
-	                    item = itemsItr.next().getElement();
-	                    item.setQName(new QName(item.getName(), queryElement.getNamespace()));
-	                    queryElement.add(item.createCopy());
-	                }
-	             }
+                    // overwrite the 'set' element.
+                    queryElement.remove(queryElement.element(
+                            QName.get("set",
+                                    ResultSet.NAMESPACE_RESULT_SET_MANAGEMENT)));
+                    queryElement.add(rs.generateSetElementFromResults(rsmResults));
+                } else {
+                    // don't apply RSM:
+                    // Add to the reply all the items provided by the DiscoItemsProvider
+                    Element item;
+                    while (itemsItr.hasNext()) {
+                        item = itemsItr.next().getElement();
+                        item.setQName(new QName(item.getName(), queryElement.getNamespace()));
+                        queryElement.add(item.createCopy());
+                    }
+                 }
             }
             else {
                 // If the DiscoItemsProvider has no items for the requested name and node 
@@ -289,7 +292,27 @@ public class IQDiscoItemsHandler extends IQHandler implements ServerFeaturesProv
             infoHandler.removeProvider(host);
             removeProvider(host);
         }
+    }
 
+    /**
+     * Adds the items provided by the new service that implements the UserItemsProvider interface. This information will
+     * be used whenever a disco for items is made against users of the server.
+     *
+     * @param provider the UserItemsProvider that provides new user items.
+     */
+    public void addUserItemsProvider( UserItemsProvider provider )
+    {
+        this.userItemsProviders.add( provider );
+    }
+
+    /**
+     * Removes the UserItemsProvider
+     *
+     * @param provider the UserItemsProvider that provides new user items.
+     */
+    public void removeUserItemsProvider( UserItemsProvider provider )
+    {
+        this.userItemsProviders.remove( provider );
     }
 
     /**
@@ -393,7 +416,7 @@ public class IQDiscoItemsHandler extends IQHandler implements ServerFeaturesProv
     }
 
     @Override
-	public void initialize(XMPPServer server) {
+    public void initialize(XMPPServer server) {
         super.initialize(server);
         serverItems = CacheFactory.createCache("Disco Server Items");
         // Track the implementors of ServerItemsProvider so that we can collect the items
@@ -405,11 +428,8 @@ public class IQDiscoItemsHandler extends IQHandler implements ServerFeaturesProv
     }
 
     @Override
-	public void start() throws IllegalStateException {
+    public void start() throws IllegalStateException {
         super.start();
-        for (ServerItemsProvider provider : XMPPServer.getInstance().getServerItemsProviders()) {
-            addServerItemsProvider(provider);
-        }
     }
 
     @Override
@@ -501,22 +521,17 @@ public class IQDiscoItemsHandler extends IQHandler implements ServerFeaturesProv
                     return null;
                 }
                 if (name == null) {
-                    List<DiscoItem> answer = new ArrayList<>();
-                    for (ClusteredServerItem item : serverItems.values()) {
-                        answer.add(new DiscoItem(item.element));
-                    }
-                    return answer.iterator();
+                    return getServerItems().iterator();
                 }
                 else {
                     // If addressed to user@domain, add items from UserItemsProviders to
                     // the reply.
-                    List<UserItemsProvider> itemsProviders = XMPPServer.getInstance().getUserItemsProviders();
-                    if (itemsProviders.isEmpty()) {
+                    if ( userItemsProviders.isEmpty()) {
                         // If we didn't find any UserItemsProviders, then answer a not found error
                         return null;
                     }
                     List<DiscoItem> answer = new ArrayList<>();
-                    for (UserItemsProvider itemsProvider : itemsProviders) {
+                    for (UserItemsProvider itemsProvider : userItemsProviders ) {
                         // Check if we have items associated with the requested name
                         Iterator<Element> itemsItr = itemsProvider.getUserItems(name, senderJID);
                         if (itemsItr != null) {
@@ -579,5 +594,17 @@ public class IQDiscoItemsHandler extends IQHandler implements ServerFeaturesProv
         catch (UserNotFoundException e) {
             return answer.iterator();
         }
+    }
+
+    /**
+     * Returns all server items.
+     * @return A collection of server items.
+     */
+    public List<DiscoItem> getServerItems() {
+        List<DiscoItem> answer = new ArrayList<>();
+        for (ClusteredServerItem item : serverItems.values()) {
+            answer.add(new DiscoItem(item.element));
+        }
+        return answer;
     }
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2004-2009 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,7 +39,7 @@ import org.slf4j.LoggerFactory;
  */
 public abstract class MediaProxySession extends Thread implements ProxyCandidate, DatagramListener {
 
-	private static final Logger Log = LoggerFactory.getLogger(MediaProxySession.class);
+    private static final Logger Log = LoggerFactory.getLogger(MediaProxySession.class);
 
     private List<SessionListener> sessionListeners = new ArrayList<>();
 
@@ -204,7 +204,7 @@ public abstract class MediaProxySession extends Thread implements ProxyCandidate
      * Thread override method
      */
     @Override
-	public void run() {
+    public void run() {
         // Create channels for parties
         createChannels();
 
@@ -458,7 +458,7 @@ public abstract class MediaProxySession extends Thread implements ProxyCandidate
             long lastTimeStamp = getTimestamp();
 
             @Override
-			public void run() {
+            public void run() {
                 if (lastTimeStamp == getTimestamp()) {
                     stopAgent();
                     return;
@@ -481,7 +481,7 @@ public abstract class MediaProxySession extends Thread implements ProxyCandidate
         lifeTimer = new Timer();
         lifeTimer.scheduleAtFixedRate(new TimerTask() {
             @Override
-			public void run() {
+            public void run() {
                 stopAgent();
             }
         }, lifetime, lifetime);

@@ -46,12 +46,12 @@ public class XmppResultSet
                     before = null;
                 }
             }
-						catch (NumberFormatException e)
-						{
-							if (setElement.elementText("before").isEmpty()) {
-								this.before = Long.MAX_VALUE;
-							}
-						}
+                        catch (NumberFormatException e)
+                        {
+                            if (setElement.elementText("before").isEmpty()) {
+                                this.before = Long.MAX_VALUE;
+                            }
+                        }
             catch (Exception e)
             {
                 // swallow
@@ -125,7 +125,7 @@ public class XmppResultSet
      * @return the total size of the result set.
      */
     public Integer getCount() {
-    	return count;
+        return count;
     }
 
     /**
@@ -134,8 +134,8 @@ public class XmppResultSet
      * @return whether the result set is complete.
      */
     public boolean isComplete() {
-		return complete;
-	}
+        return complete;
+    }
 
     /**
      * Sets the id of the first element returned.
@@ -182,11 +182,11 @@ public class XmppResultSet
      *
      * @param complete
      */
-	public void setComplete(boolean complete) {
-		this.complete = complete;
-	}
+    public void setComplete(boolean complete) {
+        this.complete = complete;
+    }
 
-	public Element createResultElement()
+    public Element createResultElement()
     {
         final Element set;
 
@@ -211,5 +211,21 @@ public class XmppResultSet
         }
 
         return set;
+    }
+
+    @Override
+    public String toString()
+    {
+        return "XmppResultSet{" +
+            "after=" + after +
+            ", before=" + before +
+            ", index=" + index +
+            ", max=" + max +
+            ", first=" + first +
+            ", firstIndex=" + firstIndex +
+            ", last=" + last +
+            ", count=" + count +
+            ", complete=" + complete +
+            '}';
     }
 }

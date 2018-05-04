@@ -45,6 +45,8 @@ public class PluginMonitor
 
     private ScheduledExecutorService executor;
 
+    private boolean isTaskRunning = false;
+
     public PluginMonitor( final PluginManager pluginManager )
     {
         this.pluginManager = pluginManager;
@@ -84,6 +86,11 @@ public class PluginMonitor
         }
     }
 
+    public boolean isTaskRunning()
+    {
+        return isTaskRunning;
+    }
+
     /**
      * Immediately run a check of the plugin directory.
      */
@@ -111,6 +118,7 @@ public class PluginMonitor
             // Prevent two tasks from running in parallel by using the plugin monitor itself as a mutex.
             synchronized ( PluginMonitor.this )
             {
+                isTaskRunning = true;
                 try
                 {
                     // The directory that contains all plugins.
@@ -143,12 +151,12 @@ public class PluginMonitor
                         for ( final Path jarFile : ds )
                         {
                             final String fileName = jarFile.getFileName().toString();
-                            final String pluginName = fileName.substring( 0, fileName.length() - 4 ).toLowerCase(); // strip extension.
+                            final String canonicalPluginName = fileName.substring( 0, fileName.length() - 4 ).toLowerCase(); // strip extension.
 
-                            jarSet.add( pluginName );
+                            jarSet.add( canonicalPluginName );
 
                             // See if the JAR has already been exploded.
-                            final Path dir = pluginsDirectory.resolve( pluginName );
+                            final Path dir = pluginsDirectory.resolve( canonicalPluginName );
 
                             // See if the JAR is newer than the directory. If so, the plugin needs to be unloaded and then reloaded.
                             if ( Files.exists( dir ) && Files.getLastModifiedTime( jarFile ).toMillis() > Files.getLastModifiedTime( dir ).toMillis() )
@@ -166,14 +174,14 @@ public class PluginMonitor
                                 else
                                 {
                                     // Not the first time? Properly unload the plugin.
-                                    pluginManager.unloadPlugin( pluginName );
+                                    pluginManager.unloadPlugin( canonicalPluginName );
                                 }
                             }
 
                             // If the JAR needs to be exploded, do so.
                             if ( Files.notExists( dir ) )
                             {
-                                unzipPlugin( pluginName, jarFile, dir );
+                                unzipPlugin( canonicalPluginName, jarFile, dir );
                             }
                         }
                     }
@@ -262,10 +270,10 @@ public class PluginMonitor
                                     for ( final Path path : hierarchy )
                                     {
                                         // If the plugin hasn't already been started, start it.
-                                        final String pluginName = PluginMetadataHelper.getCanonicalName( path );
-                                        if ( pluginManager.getPlugin( pluginName ) == null )
+                                        final String canonicalName = PluginMetadataHelper.getCanonicalName( path );
+                                        if ( pluginManager.getPlugin( canonicalName ) == null )
                                         {
-                                            if ( pluginManager.loadPlugin( path ) )
+                                            if ( pluginManager.loadPlugin( canonicalName, path ) )
                                             {
                                                 loaded++;
                                             }
@@ -281,7 +289,7 @@ public class PluginMonitor
                         // of all plugins that attempt to modify the admin panel.
                         if ( pluginManager.getPlugin( "admin" ) == null )
                         {
-                            pluginManager.loadPlugin( dirs.getFirst().get( 0 ) );
+                            pluginManager.loadPlugin( "admin", dirs.getFirst().get( 0 ) );
                         }
 
                         // Hierarchies could be processed in parallel. This is likely to be beneficial during the first
@@ -318,6 +326,10 @@ public class PluginMonitor
                 catch ( Throwable e )
                 {
                     Log.error( "An unexpected exception occurred:", e );
+                }
+                finally
+                {
+                    isTaskRunning = false;
                 }
             }
         }

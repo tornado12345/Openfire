@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: $
- * $Date: 2006-04-07 09:28:54 -0500 (Fri, 07 Apr 2006) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,7 +57,7 @@ import org.slf4j.LoggerFactory;
  */
 public class LdapAuthorizationMapping implements AuthorizationMapping {
 
-	private static final Logger Log = LoggerFactory.getLogger(LdapAuthorizationMapping.class);
+    private static final Logger Log = LoggerFactory.getLogger(LdapAuthorizationMapping.class);
 
     private LdapManager manager;
     private String usernameField;
@@ -109,7 +105,7 @@ public class LdapAuthorizationMapping implements AuthorizationMapping {
             constraints.setReturningAttributes(new String[] { usernameField });
 
             NamingEnumeration answer = ctx.search("", princSearchFilter, 
-            		new String[] {LdapManager.sanitizeSearchFilter(principal)},
+                    new String[] {LdapManager.sanitizeSearchFilter(principal)},
                     constraints);
             Log.debug("LdapAuthorizationMapping: ... search finished");
             if (answer == null || !answer.hasMoreElements()) {

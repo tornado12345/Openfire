@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,61 +16,14 @@
 
 package org.jivesoftware.util;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.io.StringWriter;
-import java.math.BigInteger;
-import java.nio.charset.StandardCharsets;
-import java.security.GeneralSecurityException;
-import java.security.KeyPair;
-import java.security.KeyStore;
-import java.security.KeyStoreException;
-import java.security.NoSuchProviderException;
-import java.security.Principal;
-import java.security.PrivateKey;
-import java.security.PublicKey;
-import java.security.SecureRandom;
-import java.security.cert.CertPath;
-import java.security.cert.CertPathBuilder;
-import java.security.cert.CertPathBuilderException;
-import java.security.cert.CertPathValidator;
-import java.security.cert.CertPathValidatorException;
-import java.security.cert.CertStore;
-import java.security.cert.Certificate;
-import java.security.cert.CertificateException;
-import java.security.cert.CertificateFactory;
-import java.security.cert.CollectionCertStoreParameters;
-import java.security.cert.PKIXBuilderParameters;
-import java.security.cert.X509CertSelector;
-import java.security.cert.X509Certificate;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Date;
-import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.Hashtable;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.StringTokenizer;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-import org.bouncycastle.asn1.ASN1Encodable;
-import org.bouncycastle.asn1.ASN1ObjectIdentifier;
-import org.bouncycastle.asn1.ASN1Sequence;
-import org.bouncycastle.asn1.DERSequence;
-import org.bouncycastle.asn1.DERTaggedObject;
-import org.bouncycastle.asn1.DERUTF8String;
+import org.bouncycastle.asn1.*;
+import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
 import org.bouncycastle.asn1.pkcs.PrivateKeyInfo;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.ExtensionsGenerator;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.cert.CertException;
@@ -82,11 +31,9 @@ import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
-import org.bouncycastle.openssl.MiscPEMGenerator;
-import org.bouncycastle.openssl.PEMDecryptorProvider;
-import org.bouncycastle.openssl.PEMEncryptedKeyPair;
-import org.bouncycastle.openssl.PEMKeyPair;
-import org.bouncycastle.openssl.PEMParser;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openssl.*;
+import org.bouncycastle.openssl.jcajce.JcaMiscPEMGenerator;
 import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
 import org.bouncycastle.openssl.jcajce.JceOpenSSLPKCS8DecryptorProviderBuilder;
 import org.bouncycastle.openssl.jcajce.JcePEMDecryptorProviderBuilder;
@@ -102,6 +49,8 @@ import org.bouncycastle.pkcs.PKCSException;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
 import org.bouncycastle.util.io.pem.PemObjectGenerator;
 import org.bouncycastle.util.io.pem.PemWriter;
+import org.jivesoftware.openfire.XMPPServer;
+import org.jivesoftware.openfire.disco.DiscoItem;
 import org.jivesoftware.openfire.keystore.CertificateStore;
 import org.jivesoftware.openfire.keystore.CertificateUtils;
 import org.jivesoftware.util.cert.CNCertificateIdentityMapping;
@@ -109,6 +58,19 @@ import org.jivesoftware.util.cert.CertificateIdentityMapping;
 import org.jivesoftware.util.cert.SANCertificateIdentityMapping;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.*;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.security.*;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.CertificateParsingException;
+import java.security.cert.X509Certificate;
+import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Utility class that provides similar functionality to the keytool tool. Generated certificates
@@ -118,10 +80,9 @@ import org.slf4j.LoggerFactory;
  */
 public class CertificateManager {
 
-	private static final Logger Log = LoggerFactory.getLogger( CertificateManager.class );
+    private static final Logger Log = LoggerFactory.getLogger( CertificateManager.class );
 
     private static Pattern valuesPattern = Pattern.compile("(?i)(=)([^,]*)");
-
 
     private static List<CertificateEventListener> listeners = new CopyOnWriteArrayList<>();
 
@@ -131,9 +92,14 @@ public class CertificateManager {
     
     static {
 
+        if ( Security.getProvider( BouncyCastleProvider.PROVIDER_NAME ) == null )
+        {
+            java.security.Security.addProvider( new BouncyCastleProvider() );
+        }
+
         String serverCertIdentityMapList = JiveGlobals.getProperty("provider.serverCertIdentityMap.classList");
         if (serverCertIdentityMapList != null) {
-        	StringTokenizer st = new StringTokenizer(serverCertIdentityMapList, " ,\t\n\r\f");
+            StringTokenizer st = new StringTokenizer(serverCertIdentityMapList, " ,\t\n\r\f");
             while (st.hasMoreTokens()) {
                 String s_provider = st.nextToken();
                 try {
@@ -150,14 +116,14 @@ public class CertificateManager {
         }
         
         if (serverCertMapping.isEmpty()) {
-        	Log.debug("CertificateManager: No server CertificateIdentityMapping's found. Loading default mappings");
-        	serverCertMapping.add(new SANCertificateIdentityMapping());
-        	serverCertMapping.add(new CNCertificateIdentityMapping());   	
+            Log.debug("CertificateManager: No server CertificateIdentityMapping's found. Loading default mappings");
+            serverCertMapping.add(new SANCertificateIdentityMapping());
+            serverCertMapping.add(new CNCertificateIdentityMapping());   	
         }
                 
         String clientCertMapList = JiveGlobals.getProperty("provider.clientCertIdentityMap.classList");
         if (clientCertMapList != null) {
-        	StringTokenizer st = new StringTokenizer(clientCertMapList, " ,\t\n\r\f");
+            StringTokenizer st = new StringTokenizer(clientCertMapList, " ,\t\n\r\f");
             while (st.hasMoreTokens()) {
                 String s_provider = st.nextToken();
                 try {
@@ -174,124 +140,11 @@ public class CertificateManager {
         }
         
         if (clientCertMapping.isEmpty()) {
-        	Log.debug("CertificateManager: No client CertificateIdentityMapping's found. Loading default mappings");
-        	clientCertMapping.add(new CNCertificateIdentityMapping());
+            Log.debug("CertificateManager: No client CertificateIdentityMapping's found. Loading default mappings");
+            clientCertMapping.add(new CNCertificateIdentityMapping());
         }
     }
 
-    /**
-     * Decide whether or not to trust the given supplied certificate chain, returning the
-     * End Entity Certificate in this case where it can, and null otherwise.
-     * A self-signed certificate will, for example, return null.
-     * For certain failures, we SHOULD generate an exception - revocations and the like,
-     * but we currently do not.
-     *
-     * @param chain an array of X509Certificate where the first one is the endEntityCertificate.
-     * @param certStore a keystore containing untrusted certificates (including ICAs, etc).
-     * @param trustStore a keystore containing Trust Anchors (most-trusted CA certificates).
-     * @return trusted end-entity certificate, or null.
-     */
-    public static X509Certificate getEndEntityCertificate(Certificate chain[],
-            KeyStore certStore, KeyStore trustStore) {
-        if (chain.length == 0) {
-            return null;
-        }
-        X509Certificate first = (X509Certificate) chain[0];
-        try {
-            first.checkValidity();
-        } catch(CertificateException e) {
-            Log.warn("EE Certificate not valid: " + e.getMessage());
-            return null;
-        }
-        if (chain.length == 1
-                && first.getSubjectX500Principal().equals(first.getIssuerX500Principal())) {
-            // Chain is single cert, and self-signed.
-            try {
-                if (trustStore.getCertificateAlias(first) != null) {
-                    // Interesting case: trusted self-signed cert.
-                    return first;
-                }
-            } catch (KeyStoreException e) {
-                Log.warn("Keystore error while looking for self-signed cert; assuming untrusted.");
-            }
-            return null;
-        }
-        final List<Certificate> all_certs = new ArrayList<>();
-        try {
-            // First, load up certStore contents into a CertStore.
-            // It's a mystery why these objects are different.
-            for (Enumeration<String> aliases = certStore.aliases(); aliases
-                    .hasMoreElements();) {
-                String alias = aliases.nextElement();
-                if (certStore.isCertificateEntry(alias)) {
-                    X509Certificate cert = (X509Certificate) certStore
-                            .getCertificate(alias);
-                    all_certs.add(cert);
-                }
-            }
-            // Now add the trusted certs.
-            for (Enumeration<String> aliases = trustStore.aliases(); aliases
-                    .hasMoreElements();) {
-                String alias = aliases.nextElement();
-                if (trustStore.isCertificateEntry(alias)) {
-                    X509Certificate cert = (X509Certificate) trustStore
-                            .getCertificate(alias);
-                    all_certs.add(cert);
-                }
-            }
-            // Finally, add all the certs in the chain:
-            for (int i = 0; i < chain.length; ++i) {
-                all_certs.add(chain[i]);
-            }
-            CertStore cs = CertStore.getInstance("Collection",
-                    new CollectionCertStoreParameters(all_certs));
-            X509CertSelector selector = new X509CertSelector();
-            selector.setCertificate(first);
-            // / selector.setSubject(first.getSubjectX500Principal());
-            PKIXBuilderParameters params = new PKIXBuilderParameters(
-                    trustStore, selector);
-            params.addCertStore(cs);
-            params.setDate(new Date());
-            params.setRevocationEnabled(false);
-            /* Code here is the right way to do things. */
-            CertPathBuilder pathBuilder = CertPathBuilder
-                    .getInstance(CertPathBuilder.getDefaultType());
-            CertPath cp = pathBuilder.build(params).getCertPath();
-            /**
-             * This section is an alternative to using CertPathBuilder which is
-             * not as complete (or safe), but will emit much better errors. If
-             * things break, swap around the code.
-             *
-             **** COMMENTED OUT. ****
-            ArrayList<X509Certificate> ls = new ArrayList<X509Certificate>();
-            for (int i = 0; i < chain.length; ++i) {
-                ls.add((X509Certificate) chain[i]);
-            }
-            for (X509Certificate last = ls.get(ls.size() - 1); !last
-                    .getIssuerX500Principal().equals(last.getSubjectX500Principal()); last = ls
-                    .get(ls.size() - 1)) {
-                X509CertSelector sel = new X509CertSelector();
-                sel.setSubject(last.getIssuerX500Principal());
-                ls.add((X509Certificate) cs.getCertificates(sel).toArray()[0]);
-            }
-            CertPath cp = CertificateFactory.getInstance("X.509").generateCertPath(ls);
-             ****** END ALTERNATIVE. ****
-             */
-            // Not entirely sure if I need to do this with CertPathBuilder.
-            // Can't hurt.
-            CertPathValidator pathValidator = CertPathValidator
-                    .getInstance("PKIX");
-            pathValidator.validate(cp, params);
-            return (X509Certificate) cp.getCertificates().get(0);
-        } catch (CertPathBuilderException e) {
-            Log.warn("Path builder: " + e.getMessage());
-        } catch (CertPathValidatorException e) {
-            Log.warn("Path validator: " + e.getMessage());
-        } catch (Exception e) {
-            Log.warn("Unkown exception while validating certificate chain: " + e.getMessage());
-        }
-        return null;
-    }
 
     /**
      * Returns the identities of the remote client as defined in the specified certificate. The
@@ -302,16 +155,16 @@ public class CertificateManager {
      * @return the identities of the remote client as defined in the specified certificate.
      */
     public static List<String> getClientIdentities(X509Certificate x509Certificate) {
-    	
-    	List<String> names = new ArrayList<>();
-    	for (CertificateIdentityMapping mapping : clientCertMapping) {
-    		List<String> identities = mapping.mapIdentity(x509Certificate);
-    		Log.debug("CertificateManager: " + mapping.name() + " returned " + identities.toString());
-    		if (!identities.isEmpty()) {
-    			names.addAll(identities);
-    			break;
-    		}
-    	}
+        
+        List<String> names = new ArrayList<>();
+        for (CertificateIdentityMapping mapping : clientCertMapping) {
+            List<String> identities = mapping.mapIdentity(x509Certificate);
+            Log.debug("CertificateManager: " + mapping.name() + " returned " + identities.toString());
+            if (!identities.isEmpty()) {
+                names.addAll(identities);
+                break;
+            }
+        }
 
         return names;
     }
@@ -328,101 +181,26 @@ public class CertificateManager {
      * @return the identities of the remote server as defined in the specified certificate.
      */
     public static List<String> getServerIdentities(X509Certificate x509Certificate) {
-    	
-    	List<String> names = new ArrayList<>();
-    	for (CertificateIdentityMapping mapping : serverCertMapping) {
-    		List<String> identities = mapping.mapIdentity(x509Certificate);
-    		Log.debug("CertificateManager: " + mapping.name() + " returned " + identities.toString());
-    		if (!identities.isEmpty()) {
-    			names.addAll(identities);
-    			break;
-    		}
-    	}
+        
+        List<String> names = new ArrayList<>();
+        for (CertificateIdentityMapping mapping : serverCertMapping) {
+            List<String> identities = mapping.mapIdentity(x509Certificate);
+            Log.debug("CertificateManager: " + mapping.name() + " returned " + identities.toString());
+            if (!identities.isEmpty()) {
+                names.addAll(identities);
+                break;
+            }
+        }
 
         return names;
     }
 
     /**
-     * Returns true if an RSA certificate was found in the specified keystore for the specified domain.
-     *
-     * @param storeConfig the store to use for searching the certificate.
-     * @param domain domain of the server signed by the certificate.
-     * @return true if an RSA certificate was found in the specified keystore for the specified domain.
-     * @throws KeyStoreException
-     */
-    public static boolean isRSACertificate(CertificateStore storeConfig, String domain) throws KeyStoreException {
-        return isCertificate(storeConfig, domain, "RSA");
-    }
-
-    /**
-     * Returns true if an DSA certificate was found in the specified keystore for the specified domain.
-     *
-     * @param storeConfig the store to use for searching the certificate.
-     * @param domain domain of the server signed by the certificate.
-     * @return true if an DSA certificate was found in the specified keystore for the specified domain.
-     * @throws KeyStoreException
-     */
-    public static boolean isDSACertificate(CertificateStore storeConfig, String domain) throws KeyStoreException {
-        return isCertificate( storeConfig, domain, "DSA" );
-    }
-
-    /**
-     * Returns true if the specified certificate is using the DSA algorithm. The DSA algorithm is not
-     * good for encryption but only for authentication. On the other hand, the RSA algorithm is good
-     * for encryption and authentication.
-     *
-     * @param certificate the certificate to analyze.
-     * @return true if the specified certificate is using the DSA algorithm.
-     * @throws KeyStoreException
-     */
-    public static boolean isDSACertificate(X509Certificate certificate) throws KeyStoreException {
-        return certificate.getPublicKey().getAlgorithm().equals( "DSA" );
-    }
-
-    /**
-     * Returns true if a certificate with the specified configuration was found in a certificate store.
-     *
-     * @param storeConfig the store to use for searching the certificate.
-     * @param domain the domain present in the subjectAltName or "*" if anything is accepted.
-     * @param algorithm the DSA or RSA algorithm used by the certificate.
-     * @return true if a certificate with the specified configuration was found in the key store.
-     * @throws KeyStoreException
-     */
-    private static boolean isCertificate(CertificateStore storeConfig, String domain, String algorithm) throws KeyStoreException {
-    	for (Enumeration<String> aliases = storeConfig.getStore().aliases(); aliases.hasMoreElements();) {
-            X509Certificate certificate = (X509Certificate) storeConfig.getStore().getCertificate(aliases.nextElement());
-
-            if ( !certificate.getPublicKey().getAlgorithm().equalsIgnoreCase( algorithm ) ) {
-                continue;
-            }
-
-            if ("*".equals(domain)) {
-                // Any domain certified by the certificate is accepted
-                return true;
-            }
-            else {
-                // Only accept certified domains that match the specified domain
-                // TODO check that domain=foo.bar does not match identitiy "a.longerfoo.bar"
-                for (String identity : getServerIdentities( certificate ) ) {
-                    if (identity.endsWith(domain) ) {
-                        return true;
-                    }
-                }
-            }
-        }
-
-    	return false;
-    }
-
-    /**
      * Returns true if the specified certificate is a self-signed certificate.
      *
-     * @param keyStore key store that holds the certificate to verify.
-     * @param alias alias of the certificate in the key store.
      * @return true if the specified certificate is a self-signed certificate.
-     * @throws KeyStoreException if an error happens while usign the keystore
      */
-    public static boolean isSelfSignedCertificate(X509Certificate certificate) throws KeyStoreException {
+    public static boolean isSelfSignedCertificate(X509Certificate certificate) {
         try {
             certificate.verify(certificate.getPublicKey());
             return true;
@@ -436,12 +214,9 @@ public class CertificateManager {
      * certificates need to get their issuer information entered to be able to generate a Certificate
      * Signing Request (CSR).
      *
-     * @param keyStore key store that holds the certificate to verify.
-     * @param alias alias of the certificate in the key store.
      * @return true if the specified certificate is ready to be signed by a Certificate Authority.
-     * @throws KeyStoreException if an error happens while usign the keystore
      */
-    public static boolean isSigningRequestPending(X509Certificate certificate) throws KeyStoreException {
+    public static boolean isSigningRequestPending(X509Certificate certificate) {
         // Verify that this is a self-signed certificate
         if (!isSelfSignedCertificate(certificate)) {
             return false;
@@ -456,19 +231,90 @@ public class CertificateManager {
      * requests are required by Certificate Authorities as part of their signing process. The signing request
      * contains information about the certificate issuer, subject DN, subject alternative names and public key.
      * Private keys are not included. After the Certificate Authority verified and signed the certificate a new
-     * certificate is going to be returned. Use {@link #installReply(java.security.KeyStore, java.security.KeyStore, String, String, java.io.InputStream)}
-     * to import the CA reply.
+     * certificate is going to be returned.
      *
      * @param cert the certificate to create a signing request.
      * @param privKey the private key of the certificate.
      * @return the content of a new singing request for the specified certificate.
      */
-    public static String createSigningRequest(X509Certificate cert, PrivateKey privKey) throws OperatorCreationException, IOException {
-
+    public static String createSigningRequest(X509Certificate cert, PrivateKey privKey) throws OperatorCreationException, IOException, CertificateParsingException
+    {
         JcaPKCS10CertificationRequestBuilder csrBuilder = new JcaPKCS10CertificationRequestBuilder( //
                 cert.getSubjectX500Principal(), //
                 cert.getPublicKey() //
                 );
+
+        // Add SubjectAlternativeNames (SANs)
+        final ASN1EncodableVector subjectAlternativeNames = new ASN1EncodableVector();
+
+        final Collection<List<?>> certSans = cert.getSubjectAlternativeNames();
+        if ( certSans != null )
+        {
+            for ( final List<?> certSan : certSans )
+            {
+                final int nameType = (Integer) certSan.get( 0 );
+                final Object value = certSan.get( 1 ); // this is either a string, or a byte-array that represents the ASN.1 DER encoded form.
+                switch ( nameType )
+                {
+                    case 0:
+                        // OtherName: search for "id-on-xmppAddr" or 'sRVName' or 'userPrincipalName'
+                        try ( final ASN1InputStream decoder = new ASN1InputStream( (byte[]) value ) )
+                        {
+                            // By specification, OtherName instances must always be an ASN.1 Sequence.
+                            final ASN1Primitive object = decoder.readObject();
+                            final ASN1Sequence otherNameSeq = (ASN1Sequence) object;
+
+                            // By specification, an OtherName instance consists of:
+                            // - the type-id (which is an Object Identifier), followed by:
+                            // - a tagged value, of which the tag number is 0 (zero) and the value is defined by the type-id.
+                            final ASN1ObjectIdentifier typeId = (ASN1ObjectIdentifier) otherNameSeq.getObjectAt( 0 );
+                            final ASN1TaggedObject taggedValue = (ASN1TaggedObject) otherNameSeq.getObjectAt( 1 );
+
+                            final int tagNo = taggedValue.getTagNo();
+                            if ( tagNo != 0 )
+                            {
+                                throw new IllegalArgumentException( "subjectAltName 'otherName' sequence's second object is expected to be a tagged value of which the tag number is 0. The tag number that was detected: " + tagNo );
+                            }
+                            subjectAlternativeNames.add(
+                                new DERTaggedObject( false,
+                                                     GeneralName.otherName,
+                                                     new DERSequence(
+                                                         new ASN1Encodable[] {
+                                                             typeId,
+                                                             taggedValue
+                                                         }
+                                                     )
+                                )
+                            );
+                        }
+                        catch ( Exception e )
+                        {
+                            Log.warn( "Unable to parse certificate SAN 'otherName' value", e );
+                        }
+                        break;
+                    case 2:
+                        // DNS
+                        subjectAlternativeNames.add( new GeneralName( GeneralName.dNSName, (String) value ) );
+                        break;
+                    case 6:
+                        // URI
+                        subjectAlternativeNames.add( new GeneralName( GeneralName.uniformResourceIdentifier, (String) value ) );
+                        break;
+                    default:
+                        // Not applicable to XMPP, so silently ignore them
+                        break;
+                }
+
+            }
+        }
+
+        final GeneralNames subjectAltNames = GeneralNames.getInstance(
+            new DERSequence( subjectAlternativeNames )
+        );
+
+        final ExtensionsGenerator extGen = new ExtensionsGenerator();
+        extGen.addExtension(Extension.subjectAlternativeName, false, subjectAltNames);
+        csrBuilder.addAttribute( PKCSObjectIdentifiers.pkcs_9_at_extensionRequest, extGen.generate());
 
         String signatureAlgorithm = "SHA256WITH" + cert.getPublicKey().getAlgorithm();
 
@@ -486,128 +332,22 @@ public class CertificateManager {
     }
 
     /**
-     * Installs the Certificate Authority reply returned as part of the signing request. The certificate
-     * being signed will get its certificate chain updated with the imported certificate(s). An exception
-     * will be thrown if the replied certificate does not match a local certificate or if the signing
-     * authority is not known by the server (i.e. keystore and truststore files)
+     * Generates a PEM representation of the input argument.
      *
-     * The identity of the entity that has signed the reply is verified against the provided trust store.
-     *
-     * The
-     *
-     * @param keyStore    key store where the certificate is stored.
-     * @param trustStore  key store where ca certificates are stored.
-     * @param keyPassword password of the keystore.
-     * @param alias the alias of the existing certificate being signed.
-     * @param inputStream the stream containing the CA reply.
-     * @return true if the CA reply was successfully processed.
-     * @throws Exception
+     * @param object the input argument (cannot be null).
+     * @return PEM representation of the input argument.
+     * @throws IOException When a PEM representation of the input could not be created.
      */
-    public static boolean installReply(KeyStore keyStore, KeyStore trustStore, char[] keyPassword, String alias, InputStream inputStream) throws Exception {
-
-        // Check that there is a certificate for the specified alias
-        X509Certificate certificate = (X509Certificate) keyStore.getCertificate( alias );
-        if (certificate == null) {
-            Log.warn("Certificate not found for alias: " + alias);
-            return false;
-        }
-        // Retrieve the private key of the stored certificate
-        PrivateKey privKey = (PrivateKey) keyStore.getKey(alias, keyPassword);
-        // Load certificates found in the PEM input stream
-        Collection<X509Certificate> certs = parseCertificates( inputStream );
-        if (certs.isEmpty()) {
-            throw new Exception("Reply has no certificates");
-        }
-        List<X509Certificate> newCerts;
-        if (certs.size() == 1) {
-            // Reply has only one certificate
-            newCerts = establishCertChain(keyStore, trustStore, null, certs.iterator().next());
-        } else {
-            // Reply has a chain of certificates
-            newCerts = validateReply(keyStore, trustStore, alias, null, certs);
-        }
-        if (newCerts == null)
+    public static String toPemRepresentation( Object object ) throws IOException
+    {
+        final StringWriter result = new StringWriter();
+        try ( final PemWriter pemWriter = new PemWriter(result) )
         {
-            return false;
+            final PemObjectGenerator objGen = new JcaMiscPEMGenerator ( object );
+            pemWriter.writeObject( objGen );
         }
-        keyStore.setKeyEntry(alias, privKey, keyPassword, newCerts.toArray(new X509Certificate[newCerts.size()]));
-
-        // Notify listeners that a new certificate has been created
-        for (CertificateEventListener listener : listeners) {
-            try {
-                listener.certificateSigned( keyStore, alias, newCerts );
-            }
-            catch (Exception e) {
-                Log.error(e.getMessage(), e);
-            }
-        }
-
-        return true;
+        return result.toString();
     }
-
-
-    /**
-     * Imports a new signed certificate and its private key into the keystore. The certificate input
-     * stream may contain the signed certificate as well as its CA chain.
-     *
-     * @param keyStore    key store where the certificate will be stored.
-     * @param trustStore  key store where ca certificates are stored.
-     * @param keyPassword password of the keystore.
-     * @param alias the alias of the the new signed certificate.
-     * @param pkInputStream the stream containing the private key.
-     * @param passPhrase is the password phrased used when creating the private key.
-     * @param inputStream the stream containing the signed certificate.
-     * @return true if the certificate was successfully imported.
-     * @throws Exception if no certificates were found in the inputStream.
-     */
-    public static boolean installCert(KeyStore keyStore, KeyStore trustStore, String keyPassword, String alias,
-                                      InputStream pkInputStream, final String passPhrase, InputStream inputStream) throws Exception {
-        // Check that there is a certificate for the specified alias
-        X509Certificate certificate = (X509Certificate) keyStore.getCertificate(alias);
-        if (certificate != null) {
-            Log.warn("Certificate already exists for alias: " + alias);
-            return false;
-        }
-
-        PrivateKey privKey = parsePrivateKey( pkInputStream, passPhrase );
-        Collection<X509Certificate> certs = parseCertificates( inputStream );
-        if (certs.isEmpty()) {
-            throw new Exception("No certificates were found");
-        }
-        List<X509Certificate> newCerts;
-        if (certs.size() == 1)
-        {
-            // Reply has only one certificate
-            newCerts = establishCertChain(keyStore, trustStore, certificate, certs.iterator().next() );
-        }
-        else
-        {
-            // Reply has a chain of certificates
-            newCerts = validateReply(keyStore, trustStore, alias, certificate, certs);
-        }
-
-        if (newCerts == null)
-        {
-            return false;
-        }
-        keyStore.setKeyEntry( alias, privKey, keyPassword.toCharArray(), newCerts.toArray( new X509Certificate[ newCerts.size() ] ) );
-
-        // Notify listeners that a new certificate has been created (and signed)
-        for (CertificateEventListener listener : listeners) {
-            try {
-                listener.certificateCreated( keyStore, alias, newCerts.get( 0 ) );
-                if (newCerts.size() > 1) {
-                    listener.certificateSigned(keyStore, alias, newCerts);
-                }
-            }
-            catch (Exception e) {
-                Log.error(e.getMessage(), e);
-            }
-        }
-
-        return true;
-    }
-
 
     public static PrivateKey parsePrivateKey(String pemRepresentation, String passPhrase) throws IOException {
 
@@ -727,113 +467,22 @@ public class CertificateManager {
         listeners.remove( listener );
     }
 
-    private static List<X509Certificate> establishCertChain(KeyStore keyStore, KeyStore trustStore,
-                                                                  X509Certificate certificate,
-                                                                  X509Certificate certReply)
-            throws Exception {
-        if (certificate != null) {
-            PublicKey publickey = certificate.getPublicKey();
-            PublicKey publickey1 = certReply.getPublicKey();
-            if (!publickey.equals(publickey1)) {
-                throw new Exception("Public keys in reply and keystore don't match");
-            }
-            if (certReply.equals(certificate)) {
-                throw new Exception("Certificate reply and certificate in keystore are identical");
-            }
-        }
-        Map<String, List<X509Certificate>> knownCerts = new Hashtable<>();
-
-        // TODO Figure out why we add keystore issuers. This implies that we always trust the issuer of our identitity (which probably is right, but shouldn't be required)
-        if (keyStore.size() > 0) {
-            knownCerts.putAll(getCertsByIssuer(keyStore));
-        }
-        if (trustStore.size() > 0) {
-            knownCerts.putAll(getCertsByIssuer(trustStore));
-        }
-        LinkedList<X509Certificate> answer = new LinkedList<>();
-        if (buildChain(certReply, answer, knownCerts)) {
-            return answer;
-        } else {
-            throw new Exception("Failed to establish chain from reply");
-        }
-    }
-
-
     /**
-     * Builds the certificate chain of the specified certificate based on the known list of certificates
-     * that were issued by their respective Principals. Returns true if the entire chain of all certificates
-     * was successfully built.
-     *
-     * @param certificate certificate to build its chain.
-     * @param answer      the certificate chain for the corresponding certificate.
-     * @param knownCerts  list of known certificates grouped by their issues (i.e. Principals).
-     * @return true if the entire chain of all certificates was successfully built.
+     * Notify listeners that a certificate store has been changed.
      */
-    private static boolean buildChain(X509Certificate certificate, LinkedList<X509Certificate> answer,
-                                      Map<String, List<X509Certificate>> knownCerts) {
-        Principal subject = certificate.getSubjectDN();
-        Principal issuer = certificate.getIssuerDN();
-        // Check if the certificate is a root certificate (i.e. was issued by the same Principal that
-        // is present in the subject)
-        if (subject.equals(issuer)) {
-            answer.addFirst(certificate);
-            return true;
-        }
-        // Get the list of known certificates of the certificate's issuer
-        List<X509Certificate> issuerCerts = knownCerts.get(issuer.getName());
-        if (issuerCerts == null || issuerCerts.isEmpty()) {
-            // No certificates were found so building of chain failed
-            return false;
-        }
-        for (X509Certificate issuerCert : issuerCerts) {
-            PublicKey publickey = issuerCert.getPublicKey();
-            try {
-                // Verify the certificate with the specified public key
-                certificate.verify(publickey);
-                // Certificate was verified successfully so build chain of issuer's certificate
-                if (!buildChain(issuerCert, answer, knownCerts)) {
-                    return false;
-                }
+    public static void fireCertificateStoreChanged( CertificateStore store )
+    {
+        for ( CertificateEventListener listener : listeners )
+        {
+            try
+            {
+                listener.storeContentChanged( store );
             }
-            catch (Exception exception) {
-                // Failed to verify certificate
-                return false;
+            catch ( Exception e )
+            {
+                Log.error( "A listener threw an exception while processing a 'store changed' event.", e );
             }
         }
-        answer.addFirst( certificate );
-        return true;
-    }
-
-    /**
-     * Returns a Map where the key holds the certificate issuers and values the certificates of each issuer.
-     *
-     * @param ks the keystore to get its certs per issuer.
-     * @return a map with the certificates per issuer.
-     * @throws Exception
-     */
-    private static Map<String, List<X509Certificate>> getCertsByIssuer(KeyStore ks)
-            throws Exception {
-        Map<String, List<X509Certificate>> answer = new HashMap<>();
-        Enumeration<String> aliases = ks.aliases();
-        while (aliases.hasMoreElements()) {
-            String alias = aliases.nextElement();
-            X509Certificate cert = (X509Certificate) ks.getCertificate(alias);
-            if (cert != null) {
-                Principal subjectDN = cert.getSubjectDN();
-                List<X509Certificate> vec = answer.get(subjectDN);
-                if (vec == null) {
-                    vec = new ArrayList<>();
-                    vec.add(cert);
-                }
-                else {
-                    if (!vec.contains(cert)) {
-                        vec.add(cert);
-                    }
-                }
-                answer.put(subjectDN.getName(), vec);
-            }
-        }
-        return answer;
     }
 
     /**
@@ -855,108 +504,6 @@ public class CertificateManager {
     }
 
     /**
-     * Validates chain in certification reply, and returns the ordered
-     * elements of the chain (with user certificate first, and root
-     * certificate last in the array).
-     *
-     * @param alias the alias name
-     * @param userCert the user certificate of the alias
-     * @param certs the chain provided in the reply
-     */
-    private static List<X509Certificate> validateReply(KeyStore keyStore, KeyStore trustStore, String alias,
-                                                             X509Certificate userCert, Collection<X509Certificate> certs)
-            throws Exception {
-        List<X509Certificate> replyCerts = new ArrayList<>(certs);
-        // order the certs in the reply (bottom-up).
-        int i;
-        X509Certificate tmpCert;
-        if (userCert != null) {
-            PublicKey userPubKey = userCert.getPublicKey();
-            for (i = 0; i < replyCerts.size(); i++) {
-                if (userPubKey.equals(replyCerts.get(i).getPublicKey())) {
-                    break;
-                }
-            }
-            if (i == replyCerts.size()) {
-                throw new Exception(
-                        "Certificate reply does not contain public key for <alias>: " + alias);
-            }
-
-            tmpCert = replyCerts.get(0);
-            replyCerts.set(0, replyCerts.get(i));
-            replyCerts.set(i, tmpCert);
-        }
-
-        Principal issuer = replyCerts.get(0).getIssuerDN();
-
-        for (i = 1; i < replyCerts.size() - 1; i++) {
-            // find a cert in the reply whose "subject" is the same as the
-            // given "issuer"
-            int j;
-            for (j = i; j < replyCerts.size(); j++) {
-                Principal subject = replyCerts.get(j).getSubjectDN();
-                if (subject.equals(issuer)) {
-                    tmpCert = replyCerts.get(i);
-                    replyCerts.set(i, replyCerts.get(j));
-                    replyCerts.set(j, tmpCert);
-                    issuer = replyCerts.get(i).getIssuerDN();
-                    break;
-                }
-            }
-            if (j == replyCerts.size()) {
-                throw new Exception("Incomplete certificate chain in reply");
-            }
-        }
-
-        // now verify each cert in the ordered chain
-        for (i = 0; i < replyCerts.size() - 1; i++) {
-            PublicKey pubKey = replyCerts.get(i + 1).getPublicKey();
-            try {
-                replyCerts.get(i).verify(pubKey);
-            }
-            catch (Exception e) {
-                throw new Exception(
-                        "Certificate chain in reply does not verify: " + e.getMessage());
-            }
-        }
-
-        // do we trust the (root) cert at the top?
-        X509Certificate topCert = replyCerts.get(replyCerts.size() - 1);
-        boolean foundInKeyStore = keyStore.getCertificateAlias(topCert) != null;
-        boolean foundInCAStore =  trustStore.getCertificateAlias(topCert) != null;
-        if (!foundInKeyStore && !foundInCAStore) {
-            boolean verified = false;
-            X509Certificate rootCert = null;
-            for (Enumeration<String> aliases = trustStore.aliases(); aliases.hasMoreElements();) {
-                String name = aliases.nextElement();
-                rootCert = (X509Certificate) trustStore.getCertificate(name);
-                if (rootCert != null) {
-                    try {
-                        topCert.verify(rootCert.getPublicKey());
-                        verified = true;
-                        break;
-                    }
-                    catch (Exception e) {
-                        // Ignore
-                    }
-                }
-            }
-            if (!verified) {
-                return null;
-            }
-            else {
-                // Check if the cert is a self-signed cert
-                if (!topCert.getSubjectDN().equals(topCert.getIssuerDN())) {
-                    // append the (self-signed) root CA cert to the chain
-                    replyCerts.add(rootCert);
-                }
-            }
-        }
-
-        return replyCerts;
-    }
-
-    /**
      * Creates an X509 version3 certificate.
      *
      * @param kp           KeyPair that keeps the public and private keys for the new certificate.
@@ -973,6 +520,13 @@ public class CertificateManager {
                                                                         String subjectCommonName, String domain,
                                                                         String signAlgoritm)
             throws GeneralSecurityException, IOException {
+        return createX509V3Certificate( kp, days, issuerCommonName, subjectCommonName, domain, signAlgoritm, null );
+    }
+
+    public static synchronized X509Certificate createX509V3Certificate(KeyPair kp, int days, String issuerCommonName,
+                                                                        String subjectCommonName, String domain,
+                                                                        String signAlgoritm, Set<String> sanDnsNames)
+            throws GeneralSecurityException, IOException {
 
         // subjectDN
         X500NameBuilder subjectBuilder = new X500NameBuilder();
@@ -982,7 +536,7 @@ public class CertificateManager {
         X500NameBuilder issuerBuilder = new X500NameBuilder();
         issuerBuilder.addRDN(BCStyle.CN, issuerCommonName);
 
-        return createX509V3Certificate(kp, days, issuerBuilder, subjectBuilder, domain, signAlgoritm);
+        return createX509V3Certificate(kp, days, issuerBuilder, subjectBuilder, domain, signAlgoritm, sanDnsNames);
     }
 
     /**
@@ -999,7 +553,13 @@ public class CertificateManager {
      * @throws IOException
      */
     public static synchronized X509Certificate createX509V3Certificate(KeyPair kp, int days, X500NameBuilder issuerBuilder,
-            X500NameBuilder subjectBuilder, String domain, String signAlgoritm) throws GeneralSecurityException, IOException {
+            X500NameBuilder subjectBuilder, String domain, String signAlgoritm ) throws GeneralSecurityException, IOException
+    {
+        return createX509V3Certificate( kp, days, issuerBuilder, subjectBuilder, domain, signAlgoritm, null );
+    }
+
+    public static synchronized X509Certificate createX509V3Certificate(KeyPair kp, int days, X500NameBuilder issuerBuilder,
+            X500NameBuilder subjectBuilder, String domain, String signAlgoritm, Set<String> sanDnsNames ) throws GeneralSecurityException, IOException {
         PublicKey pubKey = kp.getPublic();
         PrivateKey privKey = kp.getPrivate();
 
@@ -1022,13 +582,11 @@ public class CertificateManager {
                 pubKey //
                 );
 
-        // add subjectAlternativeName extension
-        boolean critical = subjectDN.getRDNs().length == 0;
-        ASN1Sequence othernameSequence = new DERSequence(new ASN1Encodable[]{
-                new ASN1ObjectIdentifier("1.3.6.1.5.5.7.8.5"), new DERTaggedObject(true, 0, new DERUTF8String(domain))});
-        GeneralName othernameGN = new GeneralName(GeneralName.otherName, othernameSequence);
-        GeneralNames subjectAltNames = new GeneralNames(new GeneralName[]{othernameGN});
-        certBuilder.addExtension(Extension.subjectAlternativeName, critical, subjectAltNames);
+        // add subjectAlternativeName extension that includes all relevant names.
+        final GeneralNames subjectAlternativeNames = getSubjectAlternativeNames( sanDnsNames );
+
+        final boolean critical = subjectDN.getRDNs().length == 0;
+        certBuilder.addExtension(Extension.subjectAlternativeName, critical, subjectAlternativeNames);
 
         // add keyIdentifiers extensions
         JcaX509ExtensionUtils utils = new JcaX509ExtensionUtils();
@@ -1056,5 +614,51 @@ public class CertificateManager {
         } catch (OperatorCreationException | CertException e) {
             throw new GeneralSecurityException(e);
         }
+    }
+
+    protected static GeneralNames getSubjectAlternativeNames( Set<String> sanDnsNames )
+    {
+        final ASN1EncodableVector subjectAlternativeNames = new ASN1EncodableVector();
+        if ( sanDnsNames != null )
+        {
+            for ( final String dnsNameValue : sanDnsNames )
+            {
+                subjectAlternativeNames.add(
+                    new GeneralName( GeneralName.dNSName, dnsNameValue )
+                );
+            }
+        }
+
+        return GeneralNames.getInstance(
+            new DERSequence( subjectAlternativeNames )
+        );
+    }
+
+    /**
+     * Finds all values that aught to be added as a Subject Alternate Name of the dnsName type to a certificate that
+     * identifies this XMPP server.
+     *
+     * @return A set of names, possibly empty, never null.
+     */
+    public static Set<String> determineSubjectAlternateNameDnsNameValues()
+    {
+        final HashSet<String> result = new HashSet<>();
+
+        // Add the XMPP domain name itself.
+        result.add( XMPPServer.getInstance().getServerInfo().getXMPPDomain() );
+
+        // The fully qualified domain name of the server
+        result.add( XMPPServer.getInstance().getServerInfo().getHostname() );
+
+        if ( XMPPServer.getInstance().getIQDiscoItemsHandler() != null ) // When we're not in setup any longer...
+        {
+            // Add the name of each of the domain level item nodes as reported by service discovery.
+            for ( final DiscoItem item : XMPPServer.getInstance().getIQDiscoItemsHandler().getServerItems() )
+            {
+                result.add( item.getJID().toBareJID() );
+            }
+        }
+
+        return result;
     }
 }

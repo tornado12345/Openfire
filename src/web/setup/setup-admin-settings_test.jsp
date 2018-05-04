@@ -2,12 +2,13 @@
 <%@ page import="org.jivesoftware.util.ParamUtils, org.jivesoftware.openfire.ldap.LdapManager, org.jivesoftware.openfire.user.UserNotFoundException, org.xmpp.packet.JID" %>
 <%@ page import="java.net.URLEncoder" %>
 <%@ page import="java.util.Map" %>
+<%@ page import="java.net.URLDecoder" %>
 
 <%@ taglib uri="http://java.sun.com/jsp/jstl/core" prefix="c" %>
 <%@ taglib uri="http://java.sun.com/jsp/jstl/fmt" prefix="fmt" %>
 
 <%
-    String username = ParamUtils.getParameter(request, "username");
+    String username = URLDecoder.decode( ParamUtils.getParameter( request, "username"), "UTF-8" );
     String password = ParamUtils.getParameter(request, "password");
     boolean ldap = "true".equals(request.getParameter("ldap"));
 
@@ -43,19 +44,19 @@
         }
 %>
     <!-- BEGIN connection settings test panel -->
-	<div class="jive-testPanel">
-		<div class="jive-testPanel-content">
+    <div class="jive-testPanel">
+        <div class="jive-testPanel-content">
 
-			<div align="right" class="jive-testPanel-close">
-				<a href="#" class="lbAction" rel="deactivate"><fmt:message key="setup.ldap.server.test.close" /></a>
-			</div>
+            <div align="right" class="jive-testPanel-close">
+                <a href="#" class="lbAction" rel="deactivate"><fmt:message key="setup.ldap.server.test.close" /></a>
+            </div>
 
             <h2><fmt:message key="global.test" />: <span><fmt:message key="setup.admin.settings.test.title-desc" /></span></h2>
             <% if (password != null) { %>
                 <% if (success) { %>
                 <h4 class="jive-testSuccess"><fmt:message key="setup.admin.settings.test.status-success" /></h4>
 
-		    	<p><fmt:message key="setup.admin.settings.test.status-success.detail" /></p>
+                <p><fmt:message key="setup.admin.settings.test.status-success.detail" /></p>
                 <% } else { %>
                 <h4 class="jive-testError"><fmt:message key="setup.admin.settings.test.status-error" /></h4>
                 <p><%= errorDetail %></p>
@@ -94,8 +95,8 @@
             </form>
             <% } %>
         </div>
-	</div>
-	<!-- END connection settings test panel -->
+    </div>
+    <!-- END connection settings test panel -->
 
 <!-- BEGIN connection settings test panel -->
 <div class="jive-testPanel">

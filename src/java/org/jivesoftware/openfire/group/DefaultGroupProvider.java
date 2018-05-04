@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 3117 $
- * $Date: 2005-11-25 22:57:29 -0300 (Fri, 25 Nov 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,7 +38,7 @@ import org.xmpp.packet.JID;
  */
 public class DefaultGroupProvider extends AbstractGroupProvider {
 
-	private static final Logger Log = LoggerFactory.getLogger(DefaultGroupProvider.class);
+    private static final Logger Log = LoggerFactory.getLogger(DefaultGroupProvider.class);
 
     private static final String INSERT_GROUP =
         "INSERT INTO ofGroup (groupName, description) VALUES (?, ?)";

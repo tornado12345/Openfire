@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 2814 $
- * $Date: 2005-09-13 16:41:10 -0300 (Tue, 13 Sep 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +20,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Map;
 
-import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.lockout.LockOutManager;
 import org.jivesoftware.openfire.user.UserNotFoundException;
 import org.jivesoftware.util.Blowfish;
@@ -49,7 +44,7 @@ import org.slf4j.LoggerFactory;
  */
 public class AuthFactory {
 
-	private static final Logger Log = LoggerFactory.getLogger(AuthFactory.class);
+    private static final Logger Log = LoggerFactory.getLogger(AuthFactory.class);
 
     private static AuthProvider authProvider = null;
     private static MessageDigest digest;
@@ -137,6 +132,17 @@ public class AuthFactory {
     }
 
     /**
+     * Indicates if the currently-installed AuthProvider is the HybridAuthProvider supporting a specific class.
+     *
+     * @param clazz the class to check
+     * @return {@code true}  if the currently-installed AuthProvider is a HybridAuthProvider that supports an instance of clazz, otherwise {@code false}.
+     */
+    public static boolean isProviderHybridInstanceOf(Class<? extends AuthProvider> clazz) {
+        return authProvider instanceof HybridAuthProvider &&
+            ((HybridAuthProvider) authProvider).isProvider(clazz);
+    }
+
+    /**
      * Returns true if the currently installed {@link AuthProvider} supports password
      * retrieval. Certain implementation utilize password hashes and other authentication
      * mechanisms that do not require the original password.
@@ -173,7 +179,7 @@ public class AuthFactory {
      *      support the operation (this is an optional operation).
      */
     public static void setPassword(String username, String password) throws UserNotFoundException, 
-    		UnsupportedOperationException, ConnectionException, InternalUnauthenticatedException {
+            UnsupportedOperationException, ConnectionException, InternalUnauthenticatedException {
             authProvider.setPassword(username, password);
         }
 
@@ -292,5 +298,18 @@ public class AuthFactory {
     public static boolean supportsScram() {
         // TODO Auto-generated method stub
         return authProvider.isScramSupported();
+    }
+
+    public static String getSalt(String username) throws UnsupportedOperationException, UserNotFoundException {
+        return authProvider.getSalt(username);
+    }
+    public static int getIterations(String username) throws UnsupportedOperationException, UserNotFoundException {
+        return authProvider.getIterations(username);
+    }
+    public static String getServerKey(String username) throws UnsupportedOperationException, UserNotFoundException {
+        return authProvider.getServerKey(username);
+    }
+    public static String getStoredKey(String username) throws UnsupportedOperationException, UserNotFoundException {
+        return authProvider.getStoredKey(username);
     }
 }

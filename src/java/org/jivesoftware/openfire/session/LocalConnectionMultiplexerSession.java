@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2004-2009 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,11 +29,9 @@ import org.jivesoftware.openfire.auth.UnauthorizedException;
 import org.jivesoftware.openfire.multiplex.ConnectionMultiplexerManager;
 import org.jivesoftware.openfire.multiplex.MultiplexerPacketDeliverer;
 import org.jivesoftware.openfire.net.SASLAuthentication;
-import org.jivesoftware.openfire.net.SocketConnection;
 import org.jivesoftware.openfire.spi.ConnectionConfiguration;
 import org.jivesoftware.openfire.spi.ConnectionManagerImpl;
 import org.jivesoftware.openfire.spi.ConnectionType;
-import org.jivesoftware.util.JiveGlobals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xmlpull.v1.XmlPullParser;
@@ -61,7 +59,7 @@ import org.xmpp.packet.StreamError;
  */
 public class LocalConnectionMultiplexerSession extends LocalSession implements ConnectionMultiplexerSession {
 
-	private static final Logger Log = LoggerFactory.getLogger(LocalConnectionMultiplexerSession.class);
+    private static final Logger Log = LoggerFactory.getLogger(LocalConnectionMultiplexerSession.class);
 
     public static LocalConnectionMultiplexerSession createSession(String serverName, XmlPullParser xpp, Connection connection)
             throws XmlPullParserException {
@@ -190,7 +188,7 @@ public class LocalConnectionMultiplexerSession extends LocalSession implements C
     }
 
     @Override
-	public String getAvailableStreamFeatures() {
+    public String getAvailableStreamFeatures() {
         if (conn.getTlsPolicy() == Connection.TLSPolicy.required && !conn.isSecure()) {
             return null;
         }
@@ -291,12 +289,12 @@ public class LocalConnectionMultiplexerSession extends LocalSession implements C
     }
 
     @Override
-	boolean canProcess(Packet packet) {
+    boolean canProcess(Packet packet) {
         return true;
     }
 
     @Override
-	void deliver(Packet packet) throws UnauthorizedException {
+    void deliver(Packet packet) throws UnauthorizedException {
         if (!conn.isClosed()) {
             conn.deliver(packet);
         }

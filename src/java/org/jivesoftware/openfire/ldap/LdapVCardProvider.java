@@ -1,7 +1,4 @@
-/**
- * $Revision: 1217 $
- * $Date: 2005-04-11 14:11:06 -0700 (Mon, 11 Apr 2005) $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +32,7 @@ import org.dom4j.DocumentHelper;
 import org.dom4j.Element;
 import org.dom4j.Node;
 import org.jivesoftware.openfire.vcard.DefaultVCardProvider;
+import org.jivesoftware.openfire.vcard.PhotoResizer;
 import org.jivesoftware.openfire.vcard.VCardManager;
 import org.jivesoftware.openfire.vcard.VCardProvider;
 import org.jivesoftware.util.AlreadyExistsException;
@@ -114,7 +112,7 @@ import org.xmpp.packet.JID;
  */
 public class LdapVCardProvider implements VCardProvider, PropertyEventListener {
 
-	private static final Logger Log = LoggerFactory.getLogger(LdapVCardProvider.class);
+    private static final Logger Log = LoggerFactory.getLogger(LdapVCardProvider.class);
 
     private LdapManager manager;
     private VCardTemplate template;
@@ -246,6 +244,12 @@ public class LdapVCardProvider implements VCardProvider, PropertyEventListener {
                 vcard.add(avatarElement);
             }
         }
+
+        if ( JiveGlobals.getBooleanProperty( PhotoResizer.PROPERTY_RESIZE_ON_LOAD, PhotoResizer.PROPERTY_RESIZE_ON_LOAD_DEFAULT ) )
+        {
+            PhotoResizer.resizeAvatar( vcard );
+        }
+
         Log.debug("LdapVCardProvider: Returning vcard");
         return vcard;
     }

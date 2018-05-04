@@ -1,7 +1,4 @@
-/**
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +20,6 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -57,7 +53,7 @@ import org.xmpp.packet.Presence;
  */
 public class PacketCopier implements PacketInterceptor, ComponentEventListener {
 
-	private static final Logger Log = LoggerFactory.getLogger(PacketCopier.class);
+    private static final Logger Log = LoggerFactory.getLogger(PacketCopier.class);
 
     private final static PacketCopier instance = new PacketCopier();
 
@@ -215,7 +211,7 @@ public class PacketCopier implements PacketInterceptor, ComponentEventListener {
 
     private class ProcessPacketsTask extends TimerTask {
         @Override
-		public void run() {
+        public void run() {
             try {
                 // Notify components of intercepted packets
                 processPackets();

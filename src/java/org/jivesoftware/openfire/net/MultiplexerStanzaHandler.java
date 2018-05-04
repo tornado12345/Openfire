@@ -1,7 +1,4 @@
-/**
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +24,8 @@ import org.jivesoftware.openfire.multiplex.MultiplexerPacketHandler;
 import org.jivesoftware.openfire.multiplex.Route;
 import org.jivesoftware.openfire.session.LocalConnectionMultiplexerSession;
 import org.jivesoftware.openfire.session.Session;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 import org.xmpp.packet.IQ;
@@ -40,6 +39,8 @@ import org.xmpp.packet.Presence;
  * @author Gaston Dombiak
  */
 public class MultiplexerStanzaHandler extends StanzaHandler {
+
+    private static final Logger Log = LoggerFactory.getLogger( MultiplexerStanzaHandler.class );
 
     /**
      * Handler of IQ packets sent from the Connection Manager to the server.
@@ -56,7 +57,7 @@ public class MultiplexerStanzaHandler extends StanzaHandler {
     }
 
     @Override
-	protected void processIQ(final IQ packet) {
+    protected void processIQ(final IQ packet) {
         if (session.getStatus() != Session.STATUS_AUTHENTICATED) {
             // Session is not authenticated so return error
             IQ reply = new IQ();
@@ -73,13 +74,13 @@ public class MultiplexerStanzaHandler extends StanzaHandler {
     }
 
     @Override
-	protected void processMessage(final Message packet) throws UnauthorizedException {
+    protected void processMessage(final Message packet) throws UnauthorizedException {
         throw new UnauthorizedException("Message packets are not supported. Original packets " +
                 "should be wrapped by route packets.");
     }
 
     @Override
-	protected void processPresence(final Presence packet) throws UnauthorizedException {
+    protected void processPresence(final Presence packet) throws UnauthorizedException {
         throw new UnauthorizedException("Message packets are not supported. Original packets " +
                 "should be wrapped by route packets.");
     }
@@ -107,7 +108,7 @@ public class MultiplexerStanzaHandler extends StanzaHandler {
     }
 
     @Override
-	boolean processUnknowPacket(Element doc) {
+    boolean processUnknowPacket(Element doc) {
         String tag = doc.getName();
         if ("route".equals(tag)) {
             // Process stanza wrapped by the route packet
@@ -115,10 +116,12 @@ public class MultiplexerStanzaHandler extends StanzaHandler {
             return true;
         } else if ("handshake".equals(tag)) {
             if (!((LocalConnectionMultiplexerSession) session).authenticate(doc.getStringValue())) {
+                Log.debug( "Closing session that failed to authenticate: {}", session );
                 session.close();
             }
             return true;
         } else if ("error".equals(tag) && "stream".equals(doc.getNamespacePrefix())) {
+            Log.debug( "Closing session because of received stream error {}. Affected session: {}", doc.asXML(), session );
             session.close();
             return true;
         }
@@ -126,22 +129,22 @@ public class MultiplexerStanzaHandler extends StanzaHandler {
     }
 
     @Override
-	String getNamespace() {
+    String getNamespace() {
         return "jabber:connectionmanager";
     }
 
     @Override
-	boolean validateHost() {
+    boolean validateHost() {
         return false;
     }
 
     @Override
-	boolean validateJIDs() {
+    boolean validateJIDs() {
         return false;
     }
 
     @Override
-	boolean createSession(String namespace, String serverName, XmlPullParser xpp, Connection connection)
+    boolean createSession(String namespace, String serverName, XmlPullParser xpp, Connection connection)
             throws XmlPullParserException {
         if (getNamespace().equals(namespace)) {
             // The connected client is a connection manager so create a ConnectionMultiplexerSession
@@ -155,7 +158,7 @@ public class MultiplexerStanzaHandler extends StanzaHandler {
     }
 
     @Override
-	void startTLS() throws Exception {
+    void startTLS() throws Exception {
         connection.startTLS(false);
     }
 }

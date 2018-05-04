@@ -1,8 +1,7 @@
 package org.jivesoftware.openfire.keystore;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.jivesoftware.openfire.spi.ConnectionType;
-import org.jivesoftware.util.JiveGlobals;
+import org.jivesoftware.util.CertificateManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,8 +9,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.*;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
@@ -93,6 +90,7 @@ public abstract class CertificateStore
         try ( final FileInputStream is = new FileInputStream( configuration.getFile() ) )
         {
             store.load( is, configuration.getPassword() );
+            CertificateManager.fireCertificateStoreChanged( this );
         }
         catch ( IOException | NoSuchAlgorithmException | CertificateException ex )
         {
@@ -147,7 +145,6 @@ public abstract class CertificateStore
      * When the store does not contain an entry that matches the provided alias, this method does nothing.
      *
      * @param alias The alias for which to delete an entry (cannot be null or empty).
-     * @throws CertificateStoreConfigException
      */
     public void delete( String alias ) throws CertificateStoreConfigException
     {
@@ -174,8 +171,6 @@ public abstract class CertificateStore
             throw new CertificateStoreConfigException( "Unable to install a certificate into an identity store.", e );
 
         }
-
-        // TODO: Notify listeners that a new certificate has been removed.
     }
 
     public KeyStore getStore()

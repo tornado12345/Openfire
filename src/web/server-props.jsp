@@ -1,6 +1,4 @@
 <%--
-  -	$Revision$
-  -	$Date$
   -
   - Copyright (C) 2004-2008 Jive Software. All rights reserved.
   -
@@ -28,6 +26,7 @@
                  java.util.HashMap"
 %>
 <%@ page import="java.util.Map" %>
+<%@ page import="org.xmpp.packet.JID" %>
 
 <%@ taglib uri="http://java.sun.com/jsp/jstl/core" prefix="c" %>
 <%@ taglib uri="http://java.sun.com/jsp/jstl/fmt" prefix="fmt" %>
@@ -94,6 +93,11 @@
         if (serverName == null) {
             errors.put("serverName", "");
         }
+        try {
+            JID.domainprep(serverName);
+        } catch (Exception e) {
+            errors.put("serverName", "");
+        }
         if (port < 1) {
             errors.put("port", "");
         }
@@ -133,7 +137,7 @@
         if (errors.size() == 0) {
             boolean needRestart = false;
             if (!serverName.equals(server.getServerInfo().getXMPPDomain())) {
-                server.getServerInfo().setXMPPDomain(serverName);
+                server.getServerInfo().setHostname(serverName);
                 needRestart = true;
             }
             connectionManager.setClientListenerPort(port);
@@ -163,7 +167,7 @@
             return;
         }
     } else {
-        serverName = server.getServerInfo().getXMPPDomain();
+        serverName = server.getServerInfo().getHostname();
         sslEnabled = connectionManager.isClientSSLListenerEnabled();
         port = connectionManager.getClientListenerPort();
         sslPort = connectionManager.getClientSSLListenerPort();
@@ -237,7 +241,7 @@
             <fmt:message key="server.props.name" />
         </td>
         <td class="c2">
-            <input type="text" name="serverName" value="<%= (serverName != null) ? serverName : "" %>"
+            <input type="text" name="serverName" value="<%= (serverName != null) ? StringUtils.escapeForXML(serverName) : "" %>"
              size="30" maxlength="150">
             <%  if (errors.containsKey("serverName")) { %>
                 <br>

@@ -1,7 +1,4 @@
-/**
- * $Revision$
- * $Date$
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,7 +59,7 @@ import org.xmpp.packet.PacketError;
 public class MediaProxyService extends BasicModule
         implements ServerItemsProvider, RoutableChannelHandler, DiscoInfoProvider, DiscoItemsProvider {
 
-	private static final Logger Log = LoggerFactory.getLogger(MediaProxyService.class);
+    private static final Logger Log = LoggerFactory.getLogger(MediaProxyService.class);
 
     private String serviceName;
     private RoutingTable routingTable;
@@ -84,7 +81,7 @@ public class MediaProxyService extends BasicModule
     }
 
     @Override
-	public void initialize(XMPPServer server) {
+    public void initialize(XMPPServer server) {
         super.initialize(server);
 
         sessionManager = server.getSessionManager();
@@ -107,7 +104,7 @@ public class MediaProxyService extends BasicModule
     }
 
     @Override
-	public void start() {
+    public void start() {
         if (isEnabled()) {
 
             try {
@@ -127,7 +124,7 @@ public class MediaProxyService extends BasicModule
     }
 
     @Override
-	public void stop() {
+    public void stop() {
         super.stop();
         mediaProxy.stopProxy();
         XMPPServer.getInstance().getIQDiscoItemsHandler().removeComponentItem(getAddress().toString());
@@ -138,7 +135,7 @@ public class MediaProxyService extends BasicModule
     // Component Interface
 
     @Override
-	public String getName() {
+    public String getName() {
         // Get the name from the plugin.xml file.
         return serviceName;
     }
@@ -318,18 +315,18 @@ public class MediaProxyService extends BasicModule
 
     @Override
     public Iterator<DiscoServerItem> getItems()
-	{
-		List<DiscoServerItem> items = new ArrayList<>();
-		if (!isEnabled())
-		{
-			return items.iterator();
-		}
+    {
+        List<DiscoServerItem> items = new ArrayList<>();
+        if (!isEnabled())
+        {
+            return items.iterator();
+        }
 
-		final DiscoServerItem item = new DiscoServerItem(new JID(
-			getServiceDomain()), "Media Proxy Service", null, null, this, this);
-		items.add(item);
-		return items.iterator();
-	}
+        final DiscoServerItem item = new DiscoServerItem(new JID(
+            getServiceDomain()), "Media Proxy Service", null, null, this, this);
+        items.add(item);
+        return items.iterator();
+    }
 
     @Override
     public Iterator<Element> getIdentities(String name, String node, JID senderJID) {

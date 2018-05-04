@@ -1,8 +1,4 @@
-/**
- * $RCSfile: OfflineMessageStrategy.java,v $
- * $Revision: 3114 $
- * $Date: 2005-11-23 18:12:54 -0300 (Wed, 23 Nov 2005) $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,7 +32,6 @@ import org.slf4j.LoggerFactory;
 import org.xmpp.packet.JID;
 import org.xmpp.packet.Message;
 import org.xmpp.packet.PacketError;
-import org.xmpp.packet.PacketExtension;
 
 /**
  * Controls what is done with offline messages.
@@ -45,7 +40,7 @@ import org.xmpp.packet.PacketExtension;
  */
 public class OfflineMessageStrategy extends BasicModule implements ServerFeaturesProvider {
 
-	private static final Logger Log = LoggerFactory.getLogger(OfflineMessageStrategy.class);
+    private static final Logger Log = LoggerFactory.getLogger(OfflineMessageStrategy.class);
 
     private static int quota = 100*1024; // Default to 100 K.
     private static Type type = Type.store_and_bounce;
@@ -84,7 +79,7 @@ public class OfflineMessageStrategy extends BasicModule implements ServerFeature
     public void storeOffline(Message message) {
         if (message != null) {
             // Do nothing if the message was sent to the server itself, an anonymous user or a non-existent user
-        	// Also ignore message carbons
+            // Also ignore message carbons
             JID recipientJID = message.getTo();
             if (recipientJID == null || serverAddress.equals(recipientJID) ||
                     recipientJID.getNode() == null ||
@@ -229,7 +224,7 @@ public class OfflineMessageStrategy extends BasicModule implements ServerFeature
     }
 
     @Override
-	public void initialize(XMPPServer server) {
+    public void initialize(XMPPServer server) {
         super.initialize(server);
         messageStore = server.getOfflineMessageStore();
         router = server.getPacketRouter();

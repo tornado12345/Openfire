@@ -23,7 +23,37 @@
 
     final Map<String, String> errors = new HashMap<>();
     pageContext.setAttribute( "errors", errors );
-    pageContext.setAttribute( "connectionTypes", ConnectionType.values() );
+
+    // OF-1415: Show distinct boxes for all connection types, but only when their configuration differs!
+    boolean showAll = false;
+    CertificateStoreConfiguration identityStoreConfiguration = null;
+    CertificateStoreConfiguration trustStoreConfiguration = null;
+    for ( ConnectionType connectionType : ConnectionType.values() )
+    {
+        if ( identityStoreConfiguration == null )
+        {
+            identityStoreConfiguration = certificateStoreManager.getIdentityStoreConfiguration( connectionType );
+        }
+        if ( !identityStoreConfiguration.equals( certificateStoreManager.getIdentityStoreConfiguration( connectionType ) ) )
+        {
+            showAll = true;
+            break;
+        }
+
+        // Disabled this until we sort out the difference between regular trust stores and the client trust store.
+//        if ( trustStoreConfiguration == null )
+//        {
+//            trustStoreConfiguration = certificateStoreManager.getTrustStoreConfiguration( connectionType );
+//        }
+//        if ( !trustStoreConfiguration.equals( certificateStoreManager.getTrustStoreConfiguration( connectionType ) ) )
+//        {
+//            showAll = true;
+//            break;
+//        }
+    }
+
+    pageContext.setAttribute( "showAll", showAll );
+    pageContext.setAttribute( "connectionTypes", (showAll ? ConnectionType.values() : new ConnectionType[] { ConnectionType.SOCKET_C2S } ));
     pageContext.setAttribute( "certificateStoreManager", certificateStoreManager );
 
     boolean update = request.getParameter("update") != null;
@@ -124,6 +154,7 @@
 
     <c:set var="title">
         <c:choose>
+            <c:when test="${!showAll}"><fmt:message key="ssl.certificates.store-management.combined-stores.title"/></c:when>
             <c:when test="${connectionType eq 'SOCKET_C2S'}"><fmt:message key="ssl.certificates.store-management.socket-c2s-stores.title"/></c:when>
             <c:when test="${connectionType eq 'SOCKET_S2S'}"><fmt:message key="ssl.certificates.store-management.socket-s2s-stores.title"/></c:when>
             <c:when test="${connectionType eq 'BOSH_C2S'}"><fmt:message key="ssl.certificates.store-management.bosh-c2s-stores.title"/></c:when>
@@ -135,6 +166,7 @@
 
     <c:set var="description">
         <c:choose>
+            <c:when test="${!showAll}"><fmt:message key="ssl.certificates.store-management.combined-stores.info"/></c:when>
             <c:when test="${connectionType eq 'SOCKET_C2S'}"><fmt:message key="ssl.certificates.store-management.socket-c2s-stores.info"/></c:when>
             <c:when test="${connectionType eq 'SOCKET_S2S'}"><fmt:message key="ssl.certificates.store-management.socket-s2s-stores.info"/></c:when>
             <c:when test="${connectionType eq 'BOSH_C2S'}"><fmt:message key="ssl.certificates.store-management.bosh-c2s-stores.info"/></c:when>

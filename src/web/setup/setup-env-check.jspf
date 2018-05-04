@@ -1,7 +1,4 @@
 <%--
-  -	$RCSfile$
-  -	$Revision: 1217 $
-  -	$Date: 2005-04-11 14:11:06 -0700 (Mon, 11 Apr 2005) $
 --%>
 
 <%@ page import="java.lang.reflect.Method,
@@ -11,19 +8,21 @@
 
 <%  // Check the user's environment for minimum requirements.
 
-    boolean jdk13Installed = false;
+    boolean jreVersionCompatible = false;
     boolean servlet22Installed = false;
     boolean jsp11Installed = false;
     boolean jiveJarsInstalled = false;
     boolean openfireHomeExists = false;
     File openfireHome = null;
 
-    // Check for JDK 1.5
+    // Check for JRE 1.8
     try {
-        ClassUtils.forName("java.util.concurrent.ConcurrentHashMap");
-        jdk13Installed = true;
+        String version = System.getProperty("java.version");
+        int pos = version.indexOf('.');
+        pos = version.indexOf('.', pos+1);
+        jreVersionCompatible = Double.parseDouble ( version.substring ( 0, pos)) >= 1.8;
     }
-    catch (ClassNotFoundException cnfe) {}
+    catch (Throwable t) {}
     // Check for Servlet 2.3:
     try {
         Class c = ClassUtils.forName("javax.servlet.http.HttpSession");
@@ -61,7 +60,7 @@
     }
 
     // If there were no errors, redirect to the main setup page
-    if (!jdk13Installed || !servlet22Installed || !jsp11Installed || !jiveJarsInstalled
+    if (!jreVersionCompatible || !servlet22Installed || !jsp11Installed || !jiveJarsInstalled
             || !openfireHomeExists)
     {
         pageContext.setAttribute( "localizedTitle", LocaleUtils.getLocalizedString("title") );
@@ -89,7 +88,7 @@
 
         <ul>
         <table cellpadding="3" cellspacing="2" border="0">
-        <%  if (jdk13Installed) { %>
+        <%  if ( jreVersionCompatible ) { %>
 
             <tr>
                 <td><img src="../images/check.gif" width="13" height="13" border="0"></td>

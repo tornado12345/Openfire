@@ -1,7 +1,4 @@
-/**
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +21,6 @@ import org.apache.mina.core.session.IdleStatus;
 import org.apache.mina.core.session.IoSession;
 import org.dom4j.io.XMPPPacketReader;
 import org.jivesoftware.openfire.Connection;
-import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.net.MXParser;
 import org.jivesoftware.openfire.net.ServerTrafficCounter;
 import org.jivesoftware.openfire.net.StanzaHandler;
@@ -45,11 +41,11 @@ import java.nio.charset.StandardCharsets;
  */
 public abstract class ConnectionHandler extends IoHandlerAdapter {
 
-	private static final Logger Log = LoggerFactory.getLogger(ConnectionHandler.class);
+    private static final Logger Log = LoggerFactory.getLogger(ConnectionHandler.class);
 
     static final String XML_PARSER = "XML-PARSER";
-    protected static final String HANDLER = "HANDLER";
-    protected static final String CONNECTION = "CONNECTION";
+    static final String HANDLER = "HANDLER";
+    static final String CONNECTION = "CONNECTION";
 
     private static final ThreadLocal<XMPPPacketReader> PARSER_CACHE = new ThreadLocal<XMPPPacketReader>()
             {
@@ -86,7 +82,7 @@ public abstract class ConnectionHandler extends IoHandlerAdapter {
     }
 
     @Override
-	public void sessionOpened(IoSession session) throws Exception {
+    public void sessionOpened(IoSession session) throws Exception {
         // Create a new XML parser for the new connection. The parser will be used by the XMPPDecoder filter.
         final XMLLightweightParser parser = new XMLLightweightParser(StandardCharsets.UTF_8);
         session.setAttribute(XML_PARSER, parser);
@@ -113,21 +109,21 @@ public abstract class ConnectionHandler extends IoHandlerAdapter {
     }
 
     /**
-	 * Invoked when a MINA session has been idle for half of the allowed XMPP
-	 * session idle time as specified by {@link #getMaxIdleTime()}. This method
-	 * will be invoked each time that such a period passes (even if no IO has
-	 * occurred in between).
-	 *
-	 * Openfire will disconnect a session the second time this method is
-	 * invoked, if no IO has occurred between the first and second invocation.
-	 * This allows extensions of this class to use the first invocation to check
-	 * for livelyness of the MINA session (e.g by polling the remote entity, as
-	 * {@link ClientConnectionHandler} does).
-	 *
-	 * @see IoHandlerAdapter#sessionIdle(IoSession, IdleStatus)
-	 */
+     * Invoked when a MINA session has been idle for half of the allowed XMPP
+     * session idle time as specified by {@link #getMaxIdleTime()}. This method
+     * will be invoked each time that such a period passes (even if no IO has
+     * occurred in between).
+     *
+     * Openfire will disconnect a session the second time this method is
+     * invoked, if no IO has occurred between the first and second invocation.
+     * This allows extensions of this class to use the first invocation to check
+     * for livelyness of the MINA session (e.g by polling the remote entity, as
+     * {@link ClientConnectionHandler} does).
+     *
+     * @see IoHandlerAdapter#sessionIdle(IoSession, IdleStatus)
+     */
     @Override
-	public void sessionIdle(IoSession session, IdleStatus status) throws Exception {
+    public void sessionIdle(IoSession session, IdleStatus status) throws Exception {
         if (session.getIdleCount(status) > 1) {
             // Get the connection for this session
             final Connection connection = (Connection) session.getAttribute(CONNECTION);
@@ -165,7 +161,7 @@ public abstract class ConnectionHandler extends IoHandlerAdapter {
     }
 
     @Override
-	public void messageReceived(IoSession session, Object message) throws Exception {
+    public void messageReceived(IoSession session, Object message) throws Exception {
         // Get the stanza handler for this session
         StanzaHandler handler = (StanzaHandler) session.getAttribute(HANDLER);
         // Get the parser to use to process stanza. For optimization there is going

@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision$
- * $Date$
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,7 +50,7 @@ import org.slf4j.LoggerFactory;
  */
 public class SequenceManager {
 
-	private static final Logger Log = LoggerFactory.getLogger(SequenceManager.class);
+    private static final Logger Log = LoggerFactory.getLogger(SequenceManager.class);
 
     private static final String CREATE_ID =
             "INSERT INTO ofID (id, idType) VALUES (1, ?)";

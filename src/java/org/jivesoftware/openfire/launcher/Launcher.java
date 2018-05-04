@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 3054 $
- * $Date: 2005-11-10 21:08:33 -0300 (Thu, 10 Nov 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -137,7 +133,7 @@ public class Launcher {
 
         frame = new DroppableFrame() {
             @Override
-			public void fileDropped(File file) {
+            public void fileDropped(File file) {
                 String fileName = file.getName();
                 if (fileName.endsWith(".jar") || fileName.endsWith(".war")) {
                     installPlugin(file);
@@ -246,7 +242,7 @@ public class Launcher {
                     // Start a thread to enable the admin button after 8 seconds.
                     Thread thread = new Thread() {
                         @Override
-						public void run() {
+                        public void run() {
                             try {
                                 sleep(8000);
                             }
@@ -342,13 +338,13 @@ public class Launcher {
 
         frame.addWindowListener(new WindowAdapter() {
             @Override
-			public void windowClosing(WindowEvent e) {
+            public void windowClosing(WindowEvent e) {
                 stopApplication();
                 System.exit(0);
             }
 
             @Override
-			public void windowIconified(WindowEvent e) {
+            public void windowIconified(WindowEvent e) {
                 // Make the window disappear when minimized
                 frame.setVisible(false);
                 showMenuItem.setLabel("Show");
@@ -370,7 +366,7 @@ public class Launcher {
         final ImageIcon icon = new ImageIcon(getClass().getClassLoader().getResource("splash2.gif"));
         pane = new DroppableTextPane() {
             @Override
-			public void paintComponent(Graphics g) {
+            public void paintComponent(Graphics g) {
                 final Dimension size = pane.getSize();
 
                 int x = (size.width - icon.getIconWidth()) / 2;
@@ -386,7 +382,7 @@ public class Launcher {
             }
 
             @Override
-			public void fileDropped(File file) {
+            public void fileDropped(File file) {
                 String fileName = file.getName();
                 if (fileName.endsWith(".jar") || fileName.endsWith(".war")) {
                     installPlugin(file);
@@ -461,7 +457,7 @@ public class Launcher {
             final SimpleAttributeSet styles = new SimpleAttributeSet();
             SwingWorker<String, Void> inputWorker = new SwingWorker<String, Void>() {
                 @Override
-				public String doInBackground() {
+                public String doInBackground() {
                     if (openfired != null) {
                         // Get the input stream and read from it
                         try (InputStream in = openfired.getInputStream()) {
@@ -489,7 +485,7 @@ public class Launcher {
 
             SwingWorker<String, Void> errorWorker = new SwingWorker<String, Void>() {
                 @Override
-				public String doInBackground() {
+                public String doInBackground() {
                     if (openfired != null) {
                         // Get the input stream and read from it
                         try (InputStream in = openfired.getErrorStream()) {
@@ -535,32 +531,32 @@ public class Launcher {
     private synchronized void stopApplication() {
         if (openfired != null) {
             try {
-            	// attempt to perform a graceful shutdown by sending
-            	// an "exit" command to the process (via stdin)
+                // attempt to perform a graceful shutdown by sending
+                // an "exit" command to the process (via stdin)
                 try (Writer out = new OutputStreamWriter(
                         new BufferedOutputStream(openfired.getOutputStream()))) {
                     out.write("exit\n");
                 }
                 final Thread waiting = Thread.currentThread();
-            	Thread waiter = new Thread() {
-            		@Override
-            		public void run() {
+                Thread waiter = new Thread() {
+                    @Override
+                    public void run() {
                         try {
-                        	// wait for the openfire server to stop
-                        	openfired.waitFor();
-                        	waiting.interrupt();
+                            // wait for the openfire server to stop
+                            openfired.waitFor();
+                            waiting.interrupt();
                         }
                         catch (InterruptedException ie) { /* ignore */ }
-            		}
-            	};
-            	waiter.start();
-            	try {
-            		// wait for a maximum of ten seconds
-            		Thread.sleep(10000);
-            		waiter.interrupt();
-            		openfired.destroy();
-            	}
-            	catch (InterruptedException ie) { /* ignore */ }
+                    }
+                };
+                waiter.start();
+                try {
+                    // wait for a maximum of ten seconds
+                    Thread.sleep(10000);
+                    waiter.interrupt();
+                    openfired.destroy();
+                }
+                catch (InterruptedException ie) { /* ignore */ }
                 cardLayout.show(cardPanel, "main");
             }
             catch (Exception e) {
@@ -615,7 +611,7 @@ public class Launcher {
 
         final SwingWorker<File, Void> installerThread = new SwingWorker<File, Void>() {
             @Override
-			public File doInBackground() {
+            public File doInBackground() {
                 File pluginsDir = new File(binDir.getParentFile(), "plugins");
                 String tempName = plugin.getName() + ".part";
                 File tempPluginsFile = new File(pluginsDir, tempName);
@@ -639,7 +635,7 @@ public class Launcher {
             }
 
             @Override
-			public void done() {
+            public void done() {
                 dialog.setVisible(false);
             }
         };

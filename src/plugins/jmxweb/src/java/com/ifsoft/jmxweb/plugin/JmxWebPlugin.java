@@ -1,8 +1,4 @@
-/**
- * $RCSfile: $
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,7 +32,6 @@ import org.slf4j.LoggerFactory;
 import org.apache.jasper.servlet.JasperInitializer;
 
 import org.eclipse.jetty.plus.annotation.ContainerInitializer;
-import org.eclipse.jetty.server.handler.ContextHandlerCollection;
 import org.eclipse.jetty.webapp.WebAppContext;
 import org.eclipse.jetty.util.security.*;
 import org.eclipse.jetty.security.*;
@@ -57,9 +52,9 @@ import org.apache.tomcat.SimpleInstanceManager;
 
 public class JmxWebPlugin implements Plugin  {
 
-	private static Logger Log = LoggerFactory.getLogger("JmxWebPlugin");
-	private static final String NAME 		= "jmxweb";
-	private static final String DESCRIPTION = "JmxWeb Plugin for Openfire";
+    private static Logger Log = LoggerFactory.getLogger("JmxWebPlugin");
+    private static final String NAME        = "jmxweb";
+    private static final String DESCRIPTION = "JmxWeb Plugin for Openfire";
     private static final String NAMEBASE = "com.javamonitor.openfire.plugin:";
     public final static String OBJECTNAME_OPENFIRE = NAMEBASE + "type=Openfire";
 
@@ -71,10 +66,11 @@ public class JmxWebPlugin implements Plugin  {
     private final static String OBJECTNAME_DATABASEPOOL = NAMEBASE + "type=databasepool";
     private DatabasePool database = null;
     private EmailScheduler emailScheduler = null;
+    private WebAppContext context;
+    private WebAppContext context2;
 
-
-	public void initializePlugin(PluginManager manager, File pluginDirectory) {
-		Log.info( "["+ NAME + "] initialize " + NAME + " plugin resources");
+    public void initializePlugin(PluginManager manager, File pluginDirectory) {
+        Log.info( "["+ NAME + "] initialize " + NAME + " plugin resources");
 
         try {
             openfire = new Openfire();
@@ -116,58 +112,56 @@ public class JmxWebPlugin implements Plugin  {
             Log.debug("cannot start database pool monitor: " + e.getMessage(), e);
         }
 
-		try {
+        try {
 
-			ContextHandlerCollection contexts = HttpBindManager.getInstance().getContexts();
+            try {
+                Log.info( "["+ NAME + "] starting jolokia");
+                context = new WebAppContext(null, pluginDirectory.getPath() + "/classes", "/jolokia");
+                final List<ContainerInitializer> initializers = new ArrayList<>();
+                initializers.add(new ContainerInitializer(new JasperInitializer(), null));
+                context.setAttribute("org.eclipse.jetty.containerInitializers", initializers);
+                context.setAttribute(InstanceManager.class.getName(), new SimpleInstanceManager());
+                context.setWelcomeFiles(new String[]{"index.html"});
 
-			try {
-				Log.info( "["+ NAME + "] starting jolokia");
-				WebAppContext context = new WebAppContext(contexts, pluginDirectory.getPath(), "/jolokia");
+                Log.info( "["+ NAME + "] starting hawtio");
+                context2 = new WebAppContext(null, pluginDirectory.getPath() + "/classes/hawtio", "/hawtio");
+                final List<ContainerInitializer> initializers2 = new ArrayList<>();
+                initializers2.add(new ContainerInitializer(new JasperInitializer(), null));
+                context2.setAttribute("org.eclipse.jetty.containerInitializers", initializers2);
+                context2.setAttribute(InstanceManager.class.getName(), new SimpleInstanceManager());
+                context2.setWelcomeFiles(new String[]{"index.html"});
 
-				final List<ContainerInitializer> initializers = new ArrayList<>();
-				initializers.add(new ContainerInitializer(new JasperInitializer(), null));
-				context.setAttribute("org.eclipse.jetty.containerInitializers", initializers);
-				context.setAttribute(InstanceManager.class.getName(), new SimpleInstanceManager());
-				context.setWelcomeFiles(new String[]{"index.html"});
+                if (JiveGlobals.getBooleanProperty("xmpp.jmx.secure", true))
+                {
+                    SecurityHandler securityHandler = basicAuth("jmxweb");
+                    if (securityHandler != null) context.setSecurityHandler(securityHandler);
 
-				Log.info( "["+ NAME + "] starting hawtio");
-				WebAppContext context2 = new WebAppContext(contexts, pluginDirectory.getPath() + "/hawtio", "/hawtio");
-				final List<ContainerInitializer> initializers2 = new ArrayList<>();
-				initializers2.add(new ContainerInitializer(new JasperInitializer(), null));
-				context2.setAttribute("org.eclipse.jetty.containerInitializers", initializers2);
-				context2.setAttribute(InstanceManager.class.getName(), new SimpleInstanceManager());
-				context2.setWelcomeFiles(new String[]{"index.html"});
+                    SecurityHandler securityHandler2 = basicAuth("jmxweb");
+                    if (securityHandler2 != null) context2.setSecurityHandler(securityHandler2);
+                }
+                HttpBindManager.getInstance().addJettyHandler( context );
+                HttpBindManager.getInstance().addJettyHandler( context2 );
+            }
+            catch(Exception e) {
+                Log.error( "An error has occurred", e );
+            }
+        }
+        catch (Exception e) {
+            Log.error("Error initializing JmxWeb Plugin", e);
+        }
 
-				if (JiveGlobals.getBooleanProperty("xmpp.jmx.secure", true))
-				{
-					SecurityHandler securityHandler = basicAuth("jmxweb");
-					if (securityHandler != null) context.setSecurityHandler(securityHandler);
+        if (JiveGlobals.getBooleanProperty("jmxweb.email.monitoring", true))
+        {
+            Log.info( "["+ NAME + "] starting email monitoring");
+            emailScheduler = new EmailScheduler();
+            emailScheduler.startMonitoring();
+            Log.info( "["+ NAME + "] started monitoring");
+        }
 
-					SecurityHandler securityHandler2 = basicAuth("jmxweb");
-					if (securityHandler2 != null) context2.setSecurityHandler(securityHandler2);
-				}
+    }
 
-			}
-			catch(Exception e) {
-				Log.error( "An error has occurred", e );
-        	}
-		}
-		catch (Exception e) {
-			Log.error("Error initializing JmxWeb Plugin", e);
-		}
-
-		if (JiveGlobals.getBooleanProperty("jmxweb.email.monitoring", true))
-		{
-			Log.info( "["+ NAME + "] starting email monitoring");
-			emailScheduler = new EmailScheduler();
-			emailScheduler.startMonitoring();
-			Log.info( "["+ NAME + "] started monitoring");
-		}
-
-	}
-
-	public void destroyPlugin() {
-		Log.info( "["+ NAME + "] destroy " + NAME + " plugin resources");
+    public void destroyPlugin() {
+        Log.info( "["+ NAME + "] destroy " + NAME + " plugin resources");
 
         if (database != null) {
             database.stop();
@@ -189,24 +183,28 @@ public class JmxWebPlugin implements Plugin  {
             JmxHelper.unregister(OBJECTNAME_OPENFIRE);
         }
 
-		if (emailScheduler != null)
-		{
-			emailScheduler.stopMonitoring();
-		}
+        if (emailScheduler != null)
+        {
+            emailScheduler.stopMonitoring();
+        }
+
+        HttpBindManager.getInstance().removeJettyHandler( context );
+        HttpBindManager.getInstance().removeJettyHandler( context2 );
+
         Log.info("["+ NAME + "]  plugin fully destroyed.");
-	}
+    }
 
-	public String getName() {
-		 return NAME;
-	}
+    public String getName() {
+         return NAME;
+    }
 
-	public String getDescription() {
-		return DESCRIPTION;
-	}
+    public String getDescription() {
+        return DESCRIPTION;
+    }
 
     private static final SecurityHandler basicAuth(String realm) {
 
-    	OpenfireLoginService l = new OpenfireLoginService();
+        OpenfireLoginService l = new OpenfireLoginService();
         l.setName(realm);
 
         Constraint constraint = new Constraint();

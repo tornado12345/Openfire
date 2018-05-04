@@ -1,8 +1,4 @@
-/**
- * $RCSfile: DefaultUserProvider.java,v $
- * $Revision: 3116 $
- * $Date: 2005-11-24 06:25:00 -0300 (Thu, 24 Nov 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,8 +33,6 @@ import java.util.Set;
 import org.jivesoftware.database.DbConnectionManager;
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.auth.AuthFactory;
-import org.jivesoftware.util.JiveGlobals;
-import org.jivesoftware.util.LocaleUtils;
 import org.jivesoftware.util.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,7 +53,7 @@ import org.xmpp.packet.JID;
  */
 public class DefaultUserProvider implements UserProvider {
 
-	private static final Logger Log = LoggerFactory.getLogger(DefaultUserProvider.class);
+    private static final Logger Log = LoggerFactory.getLogger(DefaultUserProvider.class);
 
     private static final String LOAD_USER =
             "SELECT salt, serverKey, storedKey, iterations, name, email, creationDate, modificationDate FROM ofUser WHERE username=?";
@@ -303,10 +297,10 @@ public class DefaultUserProvider implements UserProvider {
             con = DbConnectionManager.getConnection();
             pstmt = con.prepareStatement(UPDATE_NAME);
             if (name == null || name.matches("\\s*")) {
-            	pstmt.setNull(1, Types.VARCHAR);
+                pstmt.setNull(1, Types.VARCHAR);
             } 
             else {
-            	pstmt.setString(1, name);
+                pstmt.setString(1, name);
             }
             pstmt.setString(2, username);
             pstmt.executeUpdate();
@@ -327,10 +321,10 @@ public class DefaultUserProvider implements UserProvider {
             con = DbConnectionManager.getConnection();
             pstmt = con.prepareStatement(UPDATE_EMAIL);
             if (email == null || email.matches("\\s*")) {
-            	pstmt.setNull(1, Types.VARCHAR);
+                pstmt.setNull(1, Types.VARCHAR);
             } 
             else {
-            	pstmt.setString(1, email);
+                pstmt.setString(1, email);
             }
             pstmt.setString(2, username);
             pstmt.executeUpdate();
@@ -459,7 +453,7 @@ public class DefaultUserProvider implements UserProvider {
                 DbConnectionManager.limitRowsAndFetchSize(pstmt, startIndex, numResults);
                 for (int i=1; i<=queries; i++)
                 {
-                	pstmt.setString(i, query);
+                    pstmt.setString(i, query);
                 }
                 rs = pstmt.executeQuery();
                 // Scroll to the start index.

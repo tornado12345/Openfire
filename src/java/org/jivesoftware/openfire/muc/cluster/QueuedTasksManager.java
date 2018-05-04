@@ -1,8 +1,4 @@
-/**
- * $RCSfile: $
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2008-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,7 +45,7 @@ public class QueuedTasksManager {
         // Register a periodic task that will execute queued tasks
         TaskEngine.getInstance().scheduleAtFixedRate(new TimerTask() {
             @Override
-			public void run() {
+            public void run() {
                 if (!ClusterManager.isClusteringStarting()) {
                     MUCRoomTask mucRoomTask;
                     while ((mucRoomTask = taskQueue.poll()) != null) {

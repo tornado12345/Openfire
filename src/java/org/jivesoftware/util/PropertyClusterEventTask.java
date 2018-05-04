@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,12 +33,14 @@ public class PropertyClusterEventTask implements ClusterTask<Void> {
     private Type event;
     private String key;
     private String value;
+    private boolean isEncrypted;
 
-    public static PropertyClusterEventTask createPutTask(String key, String value) {
+    public static PropertyClusterEventTask createPutTask(String key, String value, boolean isEncrypted) {
         PropertyClusterEventTask task = new PropertyClusterEventTask();
         task.event = Type.put;
         task.key = key;
         task.value = value;
+        task.isEncrypted = isEncrypted;
         return task;
     }
 
@@ -61,7 +59,7 @@ public class PropertyClusterEventTask implements ClusterTask<Void> {
     @Override
     public void run() {
         if (Type.put == event) {
-            JiveProperties.getInstance().localPut(key, value);
+            JiveProperties.getInstance().localPut(key, value, isEncrypted);
         }
         else if (Type.deleted == event) {
             JiveProperties.getInstance().localRemove(key);
@@ -75,6 +73,7 @@ public class PropertyClusterEventTask implements ClusterTask<Void> {
         ExternalizableUtil.getInstance().writeBoolean(out, value != null);
         if (value != null) {
             ExternalizableUtil.getInstance().writeSafeUTF(out, value);
+            ExternalizableUtil.getInstance().writeBoolean(out, isEncrypted);
         }
     }
 
@@ -84,6 +83,7 @@ public class PropertyClusterEventTask implements ClusterTask<Void> {
         key = ExternalizableUtil.getInstance().readSafeUTF(in);
         if (ExternalizableUtil.getInstance().readBoolean(in)) {
             value = ExternalizableUtil.getInstance().readSafeUTF(in);
+            isEncrypted = ExternalizableUtil.getInstance().readBoolean(in);
         }
     }
 

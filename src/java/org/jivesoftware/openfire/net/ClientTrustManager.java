@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,7 +69,7 @@ import org.slf4j.LoggerFactory;
  */
 public class ClientTrustManager implements X509TrustManager {
 
-	private static final Logger Log = LoggerFactory.getLogger(ClientTrustManager.class);
+    private static final Logger Log = LoggerFactory.getLogger(ClientTrustManager.class);
 
     /**
      * KeyStore that holds the trusted CA

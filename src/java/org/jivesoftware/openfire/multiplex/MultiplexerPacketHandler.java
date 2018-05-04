@@ -1,8 +1,4 @@
-/**
- * $RCSfile: $
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +23,6 @@ import org.dom4j.Element;
 import org.dom4j.QName;
 import org.jivesoftware.openfire.SessionPacketRouter;
 import org.jivesoftware.openfire.StreamID;
-import org.jivesoftware.openfire.StreamIDFactory;
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.session.ClientSession;
 import org.jivesoftware.openfire.session.ConnectionMultiplexerSession;
@@ -51,7 +46,7 @@ import org.xmpp.packet.PacketError;
  */
 public class MultiplexerPacketHandler {
 
-	private static final Logger Log = LoggerFactory.getLogger(MultiplexerPacketHandler.class);
+    private static final Logger Log = LoggerFactory.getLogger(MultiplexerPacketHandler.class);
 
     private String connectionManagerDomain;
     private final ConnectionMultiplexerManager multiplexerManager;

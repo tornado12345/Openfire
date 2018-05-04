@@ -1,7 +1,4 @@
-/**
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2007-2009 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -163,8 +160,7 @@ public abstract class RemoteSessionTask implements ClusterTask<Object> {
         /**
          * Operations of outgoing server sessions
          */
-        getAuthenticatedDomains,
-        getHostnames,
+        getOutgoingDomainPairs,
         isUsingServerDialback,
 
         /**

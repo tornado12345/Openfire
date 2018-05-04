@@ -1,8 +1,4 @@
-/**
- * $RCSfile: PresenceRouter.java,v $
- * $Revision: 3138 $
- * $Date: 2005-12-01 02:13:26 -0300 (Thu, 01 Dec 2005) $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,7 +40,7 @@ import org.xmpp.packet.*;
  */
 public class PresenceRouter extends BasicModule {
 
-	private static final Logger Log = LoggerFactory.getLogger(PresenceRouter.class);
+    private static final Logger Log = LoggerFactory.getLogger(PresenceRouter.class);
 
     private RoutingTable routingTable;
     private PresenceUpdateHandler updateHandler;
@@ -196,13 +192,14 @@ public class PresenceRouter extends BasicModule {
             Log.error(LocaleUtils.getLocalizedString("admin.error.routing"), e);
             Session session = sessionManager.getSession(packet.getFrom());
             if (session != null) {
+                Log.debug( "Closing session of '{}': {}", packet.getFrom(), session );
                 session.close();
             }
         }
     }
 
     @Override
-	public void initialize(XMPPServer server) {
+    public void initialize(XMPPServer server) {
         super.initialize(server);
         serverName = server.getServerInfo().getXMPPDomain();
         routingTable = server.getRoutingTable();

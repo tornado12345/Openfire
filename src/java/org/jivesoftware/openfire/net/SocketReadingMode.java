@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,7 +37,7 @@ import javax.net.ssl.SSLHandshakeException;
  */
 abstract class SocketReadingMode {
 
-	private static final Logger Log = LoggerFactory.getLogger(SocketReadingMode.class);
+    private static final Logger Log = LoggerFactory.getLogger(SocketReadingMode.class);
 
     /**
      * The utf-8 charset for decoding and encoding Jabber packet streams.

@@ -2,6 +2,7 @@ package org.jivesoftware.openfire.sasl;
 
 import org.jivesoftware.openfire.Connection;
 import org.jivesoftware.openfire.auth.AuthorizationManager;
+import org.jivesoftware.openfire.keystore.TrustStore;
 import org.jivesoftware.openfire.session.LocalClientSession;
 import org.jivesoftware.util.CertificateManager;
 import org.slf4j.Logger;
@@ -11,7 +12,7 @@ import javax.security.sasl.Sasl;
 import javax.security.sasl.SaslException;
 import javax.security.sasl.SaslServer;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyStore;
+import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 
@@ -57,14 +58,14 @@ public class ExternalClientSaslServer implements SaslServer
         complete = true;
 
         final Connection connection = session.getConnection();
-        if ( connection.getPeerCertificates().length < 1 )
+        Certificate[] peerCertificates = connection.getPeerCertificates();
+        if ( peerCertificates == null || peerCertificates.length < 1 )
         {
             throw new SaslException( "No peer certificates." );
         }
 
-        final KeyStore keyStore = connection.getConfiguration().getIdentityStore().getStore();
-        final KeyStore trustStore = connection.getConfiguration().getTrustStore().getStore();
-        final X509Certificate trusted = CertificateManager.getEndEntityCertificate( connection.getPeerCertificates(), keyStore, trustStore );
+        final TrustStore trustStore = connection.getConfiguration().getTrustStore();
+        final X509Certificate trusted = trustStore.getEndEntityCertificate( peerCertificates );
         if ( trusted == null )
         {
             throw new SaslException( "Certificate chain of peer is not trusted." );

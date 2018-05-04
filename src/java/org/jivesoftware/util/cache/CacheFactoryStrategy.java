@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 3144 $
- * $Date: 2005-12-01 14:20:11 -0300 (Thu, 01 Dec 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -116,7 +112,7 @@ public interface CacheFactoryStrategy {
      */
     long getClusterTime();
 
-    	/**
+        /**
      * Invokes a task on other cluster members in an asynchronous fashion. The task will not be
      * executed on the local cluster member. If clustering is not enabled, this method
      * will do nothing.
@@ -203,5 +199,5 @@ public interface CacheFactoryStrategy {
      * @param nodeID The target cluster node
      * @return The info for the cluster node, or null if not found
      */
-	ClusterNodeInfo getClusterNodeInfo(byte[] nodeID);
+    ClusterNodeInfo getClusterNodeInfo(byte[] nodeID);
 }

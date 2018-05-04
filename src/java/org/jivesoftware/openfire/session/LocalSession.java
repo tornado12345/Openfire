@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2004-2009 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,10 +22,10 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 import javax.net.ssl.SSLSession;
 
-import org.dom4j.Element;
 import org.jivesoftware.openfire.Connection;
 import org.jivesoftware.openfire.SessionManager;
 import org.jivesoftware.openfire.StreamID;
@@ -53,7 +53,7 @@ import org.xmpp.packet.*;
  */
 public abstract class LocalSession implements Session {
 
-	private static final Logger Log = LoggerFactory.getLogger(LocalSession.class);
+    private static final Logger Log = LoggerFactory.getLogger(LocalSession.class);
 
     /**
      * The utf-8 charset for decoding and encoding Jabber packet streams.
@@ -78,7 +78,7 @@ public abstract class LocalSession implements Session {
     /**
      * The connection that this session represents.
      */
-    protected final Connection conn;
+    protected Connection conn;
 
     protected SessionManager sessionManager;
 
@@ -87,14 +87,14 @@ public abstract class LocalSession implements Session {
     private long startDate = System.currentTimeMillis();
 
     private long lastActiveDate;
-    private long clientPacketCount = 0;
-    private long serverPacketCount = 0;
+    private AtomicLong clientPacketCount = new AtomicLong( 0 );
+    private AtomicLong serverPacketCount = new AtomicLong( 0 );
 
     /**
-	 * Session temporary data. All data stored in this <code>Map</code> disapear when session
-	 * finishes.
-	 */
-	private final Map<String, Object> sessionData = new HashMap<>();
+     * Session temporary data. All data stored in this <code>Map</code> disapear when session
+     * finishes.
+     */
+    private final Map<String, Object> sessionData = new HashMap<>();
 
     /**
      * XEP-0198 Stream Manager
@@ -121,8 +121,45 @@ public abstract class LocalSession implements Session {
         String id = streamID.getID();
         this.address = new JID(null, serverName, id, true);
         this.sessionManager = SessionManager.getInstance();
-        this.streamManager = new StreamManager(conn);
+        this.streamManager = new StreamManager(this);
         this.language = language;
+    }
+
+    /**
+     * Returns true if the session is detached (that is, if the underlying connection
+     * has been closed.
+     *
+     * @return true if session detached
+     */
+    public boolean isDetached() {
+        return this.conn == null;
+    }
+
+    /**
+     * Set the session to detached mode, indicating that the underlying connection
+     * has been closed.
+     */
+    public void setDetached() {
+        this.sessionManager.addDetached(this);
+        this.conn = null;
+    }
+
+    /**
+     * Reattach the session to a new connection. The connection must already be
+     * initialized as a running XML Stream, normally by having run through XEP-0198
+     * resumption.
+     */
+    public void reattach(Connection connection, long h) {
+        Connection temp = this.conn;
+        this.conn = null;
+        if (temp != null && !temp.isClosed()) {
+            temp.close();
+        }
+        this.conn = connection;
+        this.conn.reinit(this);
+        this.status = STATUS_AUTHENTICATED;
+        this.sessionManager.removeDetached(this);
+        this.streamManager.onResume(new JID(null, this.serverName, null, true), h);
     }
 
     /**
@@ -156,6 +193,13 @@ public abstract class LocalSession implements Session {
      * @return The connection for this session
      */
     public Connection getConnection() {
+        if (conn == null) {
+            try {
+                conn.isClosed(); // This generates an NPE deliberately.
+            } catch (NullPointerException e) {
+                Log.error("Attempt to read connection of detached session: ", e);
+            }
+        }
         return conn;
     }
 
@@ -177,6 +221,10 @@ public abstract class LocalSession implements Session {
      * @param status The new status code for this session
      */
     public void setStatus(int status) {
+        if (status == STATUS_CLOSED && this.streamManager.getResume()) {
+            Log.debug("Suppressing close.");
+            return;
+        }
         this.status = status;
     }
 
@@ -225,7 +273,7 @@ public abstract class LocalSession implements Session {
      * Increments the number of packets sent from the client to the server.
      */
     public void incrementClientPacketCount() {
-        clientPacketCount++;
+        clientPacketCount.incrementAndGet();
         lastActiveDate = System.currentTimeMillis();
         streamManager.incrementServerProcessedStanzas();
     }
@@ -234,7 +282,7 @@ public abstract class LocalSession implements Session {
      * Increments the number of packets sent from the server to the client.
      */
     public void incrementServerPacketCount() {
-        serverPacketCount++;
+        serverPacketCount.incrementAndGet();
         lastActiveDate = System.currentTimeMillis();
     }
 
@@ -245,7 +293,7 @@ public abstract class LocalSession implements Session {
      */
     @Override
     public long getNumClientPackets() {
-        return clientPacketCount;
+        return clientPacketCount.get();
     }
 
     /**
@@ -255,35 +303,35 @@ public abstract class LocalSession implements Session {
      */
     @Override
     public long getNumServerPackets() {
-        return serverPacketCount;
+        return serverPacketCount.get();
     }
 
     /**
-	 * Saves given session data. Data are saved to temporary storage only and are accessible during
-	 * this session life only and only from this session instance.
-	 *
-	 * @param key a <code>String</code> value of stored data key ID.
-	 * @param value a <code>Object</code> value of data stored in session.
-	 * @see #getSessionData(String)
-	 */
-	public void setSessionData(String key, Object value) {
+     * Saves given session data. Data are saved to temporary storage only and are accessible during
+     * this session life only and only from this session instance.
+     *
+     * @param key a <code>String</code> value of stored data key ID.
+     * @param value a <code>Object</code> value of data stored in session.
+     * @see #getSessionData(String)
+     */
+    public void setSessionData(String key, Object value) {
         synchronized (sessionData) {
             sessionData.put(key, value);
         }
     }
 
-	/**
-	 * Retrieves session data. This method gives access to temporary session data only. You can
-	 * retrieve earlier saved data giving key ID to receive needed value. Please see
-	 * {@link #setSessionData(String, Object)}  description for more details.
-	 *
-	 * @param key a <code>String</code> value of stored data ID.
-	 * @return a <code>Object</code> value of data for given key.
-	 * @see #setSessionData(String, Object)
-	 */
-	public Object getSessionData(String key) {
+    /**
+     * Retrieves session data. This method gives access to temporary session data only. You can
+     * retrieve earlier saved data giving key ID to receive needed value. Please see
+     * {@link #setSessionData(String, Object)}  description for more details.
+     *
+     * @param key a <code>String</code> value of stored data ID.
+     * @return a <code>Object</code> value of data for given key.
+     * @see #setSessionData(String, Object)
+     */
+    public Object getSessionData(String key) {
         synchronized (sessionData) {
-    		return sessionData.get(key);
+            return sessionData.get(key);
         }
     }
 
@@ -305,7 +353,7 @@ public abstract class LocalSession implements Session {
      * @return The StreamManager for the session.
      */
     public StreamManager getStreamManager() {
-    	return streamManager;
+        return streamManager;
     }
 
     @Override
@@ -363,6 +411,11 @@ public abstract class LocalSession implements Session {
 
     @Override
     public void deliverRawText(String text) {
+        if ( conn == null )
+        {
+            Log.debug( "Unable to deliver raw text in session, as its connection is null. Dropping: " + text );
+            return;
+        }
         conn.deliverRawText(text);
     }
 
@@ -376,6 +429,7 @@ public abstract class LocalSession implements Session {
 
     @Override
     public void close() {
+        if (conn == null) return;
         conn.close();
     }
 
@@ -401,16 +455,22 @@ public abstract class LocalSession implements Session {
 
     @Override
     public String getHostAddress() throws UnknownHostException {
+        if (conn == null) {
+            throw new UnknownHostException("Detached session");
+        }
         return conn.getHostAddress();
     }
 
     @Override
     public String getHostName() throws UnknownHostException {
+        if (conn == null) {
+            throw new UnknownHostException("Detached session");
+        }
         return conn.getHostName();
     }
 
     @Override
-	public String toString() {
+    public String toString() {
         return super.toString() + " status: " + status + " address: " + address + " id: " + streamID;
     }
 

@@ -1,7 +1,4 @@
-/**
- * $Revision$
- * $Date$
- *
+/*
  * Copyright (C) 2006 Jive Software. All rights reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -305,7 +302,7 @@ public class TaskEngine {
         }
 
         @Override
-		public void run() {
+        public void run() {
             executor.submit(task);
         }
     }

@@ -1,8 +1,4 @@
-/**
- * $RCSfile: $
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,7 +49,7 @@ import org.slf4j.LoggerFactory;
  */
 public class ConnectionMultiplexerManager implements SessionEventListener {
 
-	private static final Logger Log = LoggerFactory.getLogger(ConnectionMultiplexerManager.class);
+    private static final Logger Log = LoggerFactory.getLogger(ConnectionMultiplexerManager.class);
 
     private static final ConnectionMultiplexerManager instance = new ConnectionMultiplexerManager();
 
@@ -119,7 +115,7 @@ public class ConnectionMultiplexerManager implements SessionEventListener {
         // to keep connections open.
         TimerTask heartbeatTask = new TimerTask() {
             @Override
-			public void run() {
+            public void run() {
                 try {
                     for (ConnectionMultiplexerSession session : sessionManager.getConnectionMultiplexerSessions()) {
                         session.deliverRawText(" ");
@@ -188,7 +184,7 @@ public class ConnectionMultiplexerManager implements SessionEventListener {
         if (sessions != null) {
             Session session = sessions.remove(streamID);
             if (session != null) {
-                // Close the session
+                Log.debug( "Closing session: {}", session );
                 session.close();
             }
         }
@@ -340,7 +336,7 @@ public class ConnectionMultiplexerManager implements SessionEventListener {
 
     @Override
     public void resourceBound(Session session) {
-    	// Do nothing.
+        // Do nothing.
     }
 
     private void removeSession(Session session) {

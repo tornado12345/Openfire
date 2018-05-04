@@ -1,6 +1,4 @@
 <%--
-  -	$Revision$
-  -	$Date$
   -
   - Copyright (C) 2004-2008 Jive Software. All rights reserved.
   -
@@ -49,17 +47,17 @@
     String alternateJIDString = ParamUtils.getParameter(request,"alternateJID");
     JID alternateJID = null;
     if (alternateJIDString != null && alternateJIDString.trim().length() > 0 ) {
-    	// OF-526: Ignore invalid alternative JIDs.
-    	try {
-    		alternateJID = new JID(alternateJIDString.trim());
-    		if (alternateJID.getNode() == null) {
-    			alternateJID = null;
-    		}
-    	} catch (IllegalArgumentException ex) {
-    		alternateJID = null;
-    	}
+        // OF-526: Ignore invalid alternative JIDs.
+        try {
+            alternateJID = new JID(alternateJIDString.trim());
+            if (alternateJID.getNode() == null) {
+                alternateJID = null;
+            }
+        } catch (IllegalArgumentException ex) {
+            alternateJID = null;
+        }
     } else {
-    	alternateJID = null;
+        alternateJID = null;
     }
     String reason = ParamUtils.getParameter(request,"reason");
     String roomName = roomJID.getNode();

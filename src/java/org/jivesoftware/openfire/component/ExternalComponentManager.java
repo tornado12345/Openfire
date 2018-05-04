@@ -1,7 +1,4 @@
-/**
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,7 +47,7 @@ import org.slf4j.LoggerFactory;
  */
 public class ExternalComponentManager {
 
-	private static final Logger Log = LoggerFactory.getLogger(ExternalComponentManager.class);
+    private static final Logger Log = LoggerFactory.getLogger(ExternalComponentManager.class);
 
     private static final String ADD_CONFIGURATION =
         "INSERT INTO ofExtComponentConf (subdomain,wildcard,secret,permission) VALUES (?,?,?,?)";
@@ -152,6 +149,7 @@ public class ExternalComponentManager {
         String domain = subdomain + "." + XMPPServer.getInstance().getServerInfo().getXMPPDomain();
         Session session = SessionManager.getInstance().getComponentSession(domain);
         if (session != null) {
+            Log.debug( "Closing session for external component '{}' as the domain is being blocked. Affected session: {}", domain, session );
             session.close();
         }
     }
@@ -489,6 +487,7 @@ public class ExternalComponentManager {
         for (ComponentSession session : SessionManager.getInstance().getComponentSessions()) {
             for (String domain : session.getExternalComponent().getSubdomains()) {
                 if (!canAccess(domain)) {
+                    Log.debug( "Closing session for external component '{}' as a changed permission policy is taken into effect. Affected session: {}", domain, session );
                     session.close();
                     break;
                 }

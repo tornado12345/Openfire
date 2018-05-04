@@ -1,7 +1,4 @@
-/**
- * $Revision$
- * $Date$
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,7 +68,7 @@ import org.xmpp.packet.JID;
 public class MultiUserChatManager extends BasicModule implements ClusterEventListener, MUCServicePropertyEventListener,
         UserEventListener {
 
-	private static final Logger Log = LoggerFactory.getLogger(MultiUserChatManager.class);
+    private static final Logger Log = LoggerFactory.getLogger(MultiUserChatManager.class);
 
     private static final String LOAD_SERVICES = "SELECT subdomain,description,isHidden FROM ofMucService";
     private static final String CREATE_SERVICE = "INSERT INTO ofMucService(serviceID,subdomain,description,isHidden) VALUES(?,?,?,?)";
@@ -103,7 +100,7 @@ public class MultiUserChatManager extends BasicModule implements ClusterEventLis
      * Called when manager starts up, to initialize things.
      */
     @Override
-	public void start() {
+    public void start() {
         super.start();
 
         loadServices();
@@ -127,7 +124,7 @@ public class MultiUserChatManager extends BasicModule implements ClusterEventLis
      * Called when manager is stopped, to clean things up.
      */
     @Override
-	public void stop() {
+    public void stop() {
         super.stop();
 
         ClusterManager.removeListener(this);

@@ -1,8 +1,4 @@
-/**
- * $RCSfile: ServerSocketReader.java,v $
- * $Revision: 3174 $
- * $Date: 2005-12-08 17:41:00 -0300 (Thu, 08 Dec 2005) $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,9 +18,7 @@ package org.jivesoftware.openfire.net;
 
 import java.io.IOException;
 import java.net.Socket;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 import org.dom4j.Element;
 import org.jivesoftware.openfire.PacketRouter;
@@ -32,7 +26,6 @@ import org.jivesoftware.openfire.RoutingTable;
 import org.jivesoftware.openfire.auth.UnauthorizedException;
 import org.jivesoftware.openfire.interceptor.PacketRejectedException;
 import org.jivesoftware.openfire.session.LocalIncomingServerSession;
-import org.jivesoftware.util.JiveGlobals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xmlpull.v1.XmlPullParserException;
@@ -59,7 +52,7 @@ import org.xmpp.packet.StreamError;
  */
 public class ServerSocketReader extends SocketReader {
 
-	private static final Logger Log = LoggerFactory.getLogger(ServerSocketReader.class);
+    private static final Logger Log = LoggerFactory.getLogger(ServerSocketReader.class);
 
     public ServerSocketReader(PacketRouter router, RoutingTable routingTable, String serverName,
             Socket socket, SocketConnection connection, boolean useBlockingMode) {
@@ -72,7 +65,7 @@ public class ServerSocketReader extends SocketReader {
      * @param packet the received packet.
      */
     @Override
-	protected void processIQ(final IQ packet) throws UnauthorizedException {
+    protected void processIQ(final IQ packet) throws UnauthorizedException {
         try {
             packetReceived(packet);
             try {
@@ -93,7 +86,7 @@ public class ServerSocketReader extends SocketReader {
      * @param packet the received packet.
      */
     @Override
-	protected void processPresence(final Presence packet) throws UnauthorizedException {
+    protected void processPresence(final Presence packet) throws UnauthorizedException {
         try {
             packetReceived(packet);
             try {
@@ -114,7 +107,7 @@ public class ServerSocketReader extends SocketReader {
      * @param packet the received packet.
      */
     @Override
-	protected void processMessage(final Message packet) throws UnauthorizedException {
+    protected void processMessage(final Message packet) throws UnauthorizedException {
         try {
             packetReceived(packet);
             try {
@@ -137,7 +130,7 @@ public class ServerSocketReader extends SocketReader {
      * @return true if the packet is a db:result packet otherwise false.
      */
     @Override
-	protected boolean processUnknowPacket(Element doc) {
+    protected boolean processUnknowPacket(Element doc) {
         // Handle subsequent db:result packets
         if ("db".equals(doc.getNamespacePrefix()) && "result".equals(doc.getName())) {
             if (!((LocalIncomingServerSession) session).validateSubsequentDomain(doc)) {
@@ -189,12 +182,12 @@ public class ServerSocketReader extends SocketReader {
     }
 
     @Override
-	protected void shutdown() {
+    protected void shutdown() {
         super.shutdown();
     }
 
     @Override
-	boolean createSession(String namespace) throws UnauthorizedException, XmlPullParserException,
+    boolean createSession(String namespace) throws UnauthorizedException, XmlPullParserException,
             IOException {
         if ("jabber:server".equals(namespace)) {
             // The connected client is a server so create an IncomingServerSession
@@ -205,22 +198,22 @@ public class ServerSocketReader extends SocketReader {
     }
 
     @Override
-	String getNamespace() {
+    String getNamespace() {
         return "jabber:server";
     }
 
     @Override
-	public String getExtraNamespaces() {
+    public String getExtraNamespaces() {
         return "xmlns:db=\"jabber:server:dialback\"";
     }
 
     @Override
-	String getName() {
+    String getName() {
         return "Server SR - " + hashCode();
     }
 
     @Override
-	boolean validateHost() {
+    boolean validateHost() {
         return true;
     }
 }

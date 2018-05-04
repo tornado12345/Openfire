@@ -1,8 +1,4 @@
-/**
- * $RCSfile: $
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +43,8 @@ import org.xmpp.forms.FormField;
 import org.xmpp.packet.IQ;
 import org.xmpp.packet.JID;
 import org.xmpp.packet.Message;
+
+import static org.jivesoftware.openfire.muc.spi.IQOwnerHandler.parseFirstValueAsBoolean;
 
 /**
  * A virtual location to which information can be published and from which event
@@ -352,7 +350,7 @@ public abstract class Node {
     private void removeAffiliation(JID jid, NodeAffiliate.Affiliation affiliation) {
         // Get the current affiliation of the specified JID
         NodeAffiliate affiliate = getAffiliate(jid);
-        // Check if the current affiliatin of the user is the one to remove
+        // Check if the current affiliation of the user is the one to remove
         if (affiliate != null && affiliation == affiliate.getAffiliation()) {
             removeAffiliation(affiliate);
         }
@@ -419,6 +417,16 @@ public abstract class Node {
         } else {
             return subscriptionsByJID.values();
         }
+    }
+
+    /**
+     * Returns all affiliates of the node.
+     *
+     * @return All affiliates of the node.
+     */
+    public Collection<NodeAffiliate> getAllAffiliates() {
+
+        return affiliates;
     }
 
     /**
@@ -492,7 +500,6 @@ public abstract class Node {
         }
         else if (DataForm.Type.submit.equals(completedForm.getType())) {
             List<String> values;
-            String booleanValue;
 
             // Get the new list of owners
             FormField ownerField = completedForm.getField("pubsub#owner");
@@ -519,40 +526,26 @@ public abstract class Node {
                     // Do nothing
                 }
                 else if ("pubsub#deliver_payloads".equals(field.getVariable())) {
-                    values = field.getValues();
-                    booleanValue = (values.size() > 0 ? values.get(0) : "1");
-                    deliverPayloads = "1".equals(booleanValue);
+                    deliverPayloads = parseFirstValueAsBoolean( field, true ) ;
                 }
                 else if ("pubsub#notify_config".equals(field.getVariable())) {
-                    values = field.getValues();
-                    booleanValue = (values.size() > 0 ? values.get(0) : "1");
-                    notifyConfigChanges = "1".equals(booleanValue);
+                    notifyConfigChanges = parseFirstValueAsBoolean( field, true ) ;
                 }
                 else if ("pubsub#notify_delete".equals(field.getVariable())) {
-                    values = field.getValues();
-                    booleanValue = (values.size() > 0 ? values.get(0) : "1");
-                    notifyDelete = "1".equals(booleanValue);
+                    notifyDelete = parseFirstValueAsBoolean( field, true ) ;
                 }
                 else if ("pubsub#notify_retract".equals(field.getVariable())) {
-                    values = field.getValues();
-                    booleanValue = (values.size() > 0 ? values.get(0) : "1");
-                    notifyRetract = "1".equals(booleanValue);
+                    notifyRetract = parseFirstValueAsBoolean( field, true ) ;
                 }
                 else if ("pubsub#presence_based_delivery".equals(field.getVariable())) {
-                    values = field.getValues();
-                    booleanValue = (values.size() > 0 ? values.get(0) : "1");
-                    presenceBasedDelivery = "1".equals(booleanValue);
+                    presenceBasedDelivery = parseFirstValueAsBoolean( field, true ) ;
                 }
                 else if ("pubsub#subscribe".equals(field.getVariable())) {
-                    values = field.getValues();
-                    booleanValue = (values.size() > 0 ? values.get(0) : "1");
-                    subscriptionEnabled = "1".equals(booleanValue);
+                    subscriptionEnabled = parseFirstValueAsBoolean( field, true ) ;
                 }
                 else if ("pubsub#subscription_required".equals(field.getVariable())) {
                     // TODO Replace this variable for the one defined in the JEP (once one is defined)
-                    values = field.getValues();
-                    booleanValue = (values.size() > 0 ? values.get(0) : "1");
-                    subscriptionConfigurationRequired = "1".equals(booleanValue);
+                    subscriptionConfigurationRequired = parseFirstValueAsBoolean( field, true ) ;
                 }
                 else if ("pubsub#type".equals(field.getVariable())) {
                     values = field.getValues();
@@ -647,7 +640,7 @@ public abstract class Node {
 
                     if (!(newParentNode instanceof CollectionNode))
                     {
-                    	throw new NotAcceptableException("Specified node in field pubsub#collection [" + newParent + "] " + ((newParentNode == null) ? "does not exist" : "is not a collection node"));
+                        throw new NotAcceptableException("Specified node in field pubsub#collection [" + newParent + "] " + ((newParentNode == null) ? "does not exist" : "is not a collection node"));
                     }
                     changeParent((CollectionNode) newParentNode);
                 }
@@ -876,7 +869,7 @@ public abstract class Node {
         }
 
         if (parent != null && !parent.isRootCollectionNode()) {
-        	formField.addValue(parent.getNodeID());
+            formField.addValue(parent.getNodeID());
         }
 
         formField = form.addField();
@@ -1037,6 +1030,8 @@ public abstract class Node {
         if (isEditing) {
             formField.setType(FormField.Type.list_single);
             formField.setLabel(LocaleUtils.getLocalizedString("pubsub.form.conf.itemreply"));
+            formField.addOption(null, ItemReplyPolicy.owner.name());
+            formField.addOption(null, ItemReplyPolicy.publisher.name());
         }
         if (replyPolicy != null) {
             formField.addValue(replyPolicy.name());
@@ -1815,7 +1810,7 @@ public abstract class Node {
      * @return the subscription whose subscription ID matches the specified ID or <tt>null</tt>
      *         if none was found.
      */
-    NodeSubscription getSubscription(String subscriptionID) {
+    public NodeSubscription getSubscription(String subscriptionID) {
         return subscriptionsByID.get(subscriptionID);
     }
 
@@ -1879,10 +1874,10 @@ public abstract class Node {
      * @param newParent the new parent node of this node.
      */
     protected void changeParent(CollectionNode newParent) {
-    	if (parent == newParent) {
-    		return;
-    	}
-    	
+        if (parent == newParent) {
+            return;
+        }
+        
         if (parent != null) {
             // Remove this node from the current parent node
             parent.removeChildNode(this);
@@ -2019,7 +2014,7 @@ public abstract class Node {
             }
         }
         
-		// Verify that the subscriber JID is currently available to receive notification 
+        // Verify that the subscriber JID is currently available to receive notification 
         // messages. This is required because the message router will deliver packets via 
         // the bare JID if a session for the full JID is not available. The "isActiveRoute"
         // condition below will prevent inadvertent delivery of multiple copies of each
@@ -2033,10 +2028,10 @@ public abstract class Node {
         // Note however that this may be somewhat in conflict with the following:
         //   12.3 "Presence-Based Delivery of Events" - automatically detect user's presence
         //
-		if (subscriberJID.getResource() == null ||
-			SessionManager.getInstance().getSession(subscriberJID) != null) {
-			service.sendNotification(this, notification, subscriberJID);
-		}
+        if (subscriberJID.getResource() == null ||
+            SessionManager.getInstance().getSession(subscriberJID) != null) {
+            service.sendNotification(this, notification, subscriberJID);
+        }
 
         if (headers != null) {
             // Remove the added child element that includes subscription IDs information
@@ -2276,25 +2271,25 @@ public abstract class Node {
 
     @Override
     public int hashCode() {
-		final int prime = 31;
-		int result = 1;
-		result = prime * result + nodeID.hashCode();
-		result = prime * result + service.getServiceID().hashCode();
-		return result;
-	}
+        final int prime = 31;
+        int result = 1;
+        result = prime * result + nodeID.hashCode();
+        result = prime * result + service.getServiceID().hashCode();
+        return result;
+    }
 
     @Override
-	public boolean equals(Object obj) {
-    	if (obj == this)
-    		return true;
-    	
-    	if (getClass() != obj.getClass())
-    		return false;
-    	
-    	Node compareNode = (Node) obj;
-    	
-		return (service.getServiceID().equals(compareNode.service.getServiceID()) && nodeID.equals(compareNode.nodeID));
-	}
+    public boolean equals(Object obj) {
+        if (obj == this)
+            return true;
+        
+        if (getClass() != obj.getClass())
+            return false;
+        
+        Node compareNode = (Node) obj;
+        
+        return (service.getServiceID().equals(compareNode.service.getServiceID()) && nodeID.equals(compareNode.nodeID));
+    }
 
     /**
      * Policy that defines whether owners or publisher should receive replies to items.

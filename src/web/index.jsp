@@ -1,7 +1,5 @@
 <%--
 <%--
-  -	$Revision$
-  -	$Date$
   -
   - Copyright (C) 2004-2008 Jive Software. All rights reserved.
   -
@@ -48,6 +46,8 @@
 <%@ page import="java.text.DecimalFormat" %>
 <%@ page import="java.util.Arrays" %>
 <%@ page import="java.util.List" %>
+<%@ page import="org.jivesoftware.openfire.net.DNSUtil" %>
+<%@ page import="org.xmpp.packet.JID" %>
 
 <%@ taglib uri="http://java.sun.com/jsp/jstl/core" prefix="c" %>
 <%@ taglib uri="http://java.sun.com/jsp/jstl/fmt" prefix="fmt" %>
@@ -69,9 +69,7 @@
 
 <%! long lastRSSFetch = 0;
     SyndFeed lastBlogFeed = null;
-    SyndFeed lastReleaseFeed = null;
-    String blogFeedRSS = "https://community.igniterealtime.org/blogs/ignite/feeds/posts";
-    String releaseFeedRSS = "https://community.igniterealtime.org/community/feeds/messages?community=2017";
+    String blogFeedRSS = "https://discourse.igniterealtime.org/c/blogs/ignite-realtime-blogs.rss";
 
 %>
 <% // Get parameters //
@@ -133,39 +131,39 @@
     padding : 0;
 }
 #jive-latest-activity .jive-bottom-line {
-	padding-top: 10px;
+    padding-top: 10px;
     border-bottom : 1px #e8a400 solid;
-	}
+    }
 #jive-latest-activity {
     border: 1px #E8A400 solid;
     background-color: #FFFBE2;
-	font-family: Lucida Grande, Arial, Helvetica, sans-serif;
-	font-size: 9pt;
+    font-family: Lucida Grande, Arial, Helvetica, sans-serif;
+    font-size: 9pt;
     padding: 0 10px 10px 10px;
     margin-bottom: 10px;
     min-height: 280px;
     -moz-border-radius: 4px;
     width: 95%;
     margin-right: 20px;
-	}
+    }
 #jive-latest-activity h4 {
-	font-size: 13pt;
-	margin: 15px 0 4px 0;
-	}
+    font-size: 13pt;
+    margin: 15px 0 4px 0;
+    }
 #jive-latest-activity h5 {
-	font-size: 9pt;
-	font-weight: normal;
+    font-size: 9pt;
+    font-weight: normal;
     margin: 15px 0 5px 5px;
-	padding: 0;
-	}
+    padding: 0;
+    }
 #jive-latest-activity .jive-blog-date {
     font-size: 8pt;
     white-space: nowrap;
-	}
+    }
 #jive-latest-activity .jive-feed-icon {
     float: right;
     padding-top: 10px;
-	}
+    }
 .info-header {
     background-color: #eee;
     font-size: 10pt;
@@ -245,12 +243,15 @@
                     <% final IdentityStore identityStore = XMPPServer.getInstance().getCertificateStoreManager().getIdentityStore( ConnectionType.SOCKET_C2S ); %>
                     <% try { %>
                     <% if (!identityStore.containsDomainCertificate( "RSA" )) {%>
-                    <img src="images/warning-16x16.gif" width="16" height="16" border="0" alt="<fmt:message key="index.certificate-warning" />" title="<fmt:message key="index.certificate-warning" />">&nbsp;
+                    <img src="images/warning-16x16.gif" width="12" height="12" border="0" alt="<fmt:message key="index.certificate-warning" />" title="<fmt:message key="index.certificate-warning" />">&nbsp;
                     <% } %>
                     <% } catch (Exception e) { %>
-                    <img src="images/error-16x16.gif" width="16" height="16" border="0" alt="<fmt:message key="index.certificate-error" />" title="<fmt:message key="index.certificate-error" />">&nbsp;
+                    <img src="images/error-16x16.gif" width="12" height="12" border="0" alt="<fmt:message key="index.certificate-error" />" title="<fmt:message key="index.certificate-error" />">&nbsp;
                     <% } %>
-                    ${webManager.serverInfo.XMPPDomain}
+                    <c:out value="${webManager.serverInfo.XMPPDomain}"/>
+                    <% try { String whatevs = JID.domainprep(webManager.getXMPPServer().getServerInfo().getXMPPDomain()); } catch (Exception e) { %>
+                    <img src="images/error-16x16.gif" width="12" height="12" border="0" alt="<fmt:message key="index.domain-stringprep-error" />" title="<fmt:message key="index.domain-stringprep-error" />">&nbsp;
+                    <% } %>
                 </td>
             </tr>
             <tr><td>&nbsp;</td></tr>
@@ -287,7 +288,37 @@
                     <fmt:message key="index.host_name" />
                 </td>
                 <td class="c2">
-                    ${webManager.serverInfo.hostname}
+                    <c:out value="${webManager.serverInfo.hostname}"/>
+                    <% try { String whatevs = JID.domainprep(webManager.getXMPPServer().getServerInfo().getHostname()); } catch (Exception e) { %>
+                    <img src="images/error-16x16.gif" width="12" height="12" border="0" alt="<fmt:message key="index.hostname-stringprep-error" />" title="<fmt:message key="index.hostname-stringprep-error" />">&nbsp;
+                    <% } %>
+                    <%  // Determine if the DNS configuration for this XMPP domain needs to be evaluated.
+                        final String xmppDomain = XMPPServer.getInstance().getServerInfo().getXMPPDomain();
+                        final String hostname = XMPPServer.getInstance().getServerInfo().getHostname();
+                        boolean dnsIssue = false;
+                        if ( !xmppDomain.equalsIgnoreCase( hostname ) )
+                        {
+                            dnsIssue = true;
+                            final List<DNSUtil.WeightedHostAddress> dnsSrvRecords = DNSUtil.srvLookup( "xmpp-client", "tcp", xmppDomain );
+                            for ( final DNSUtil.WeightedHostAddress dnsSrvRecord : dnsSrvRecords )
+                            {
+                                if ( hostname.equalsIgnoreCase( dnsSrvRecord.getHost() ) )
+                                {
+                                    dnsIssue = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if ( dnsIssue ) {
+                        %>
+                        <img src="images/warning-16x16.gif" width="12" height="12" border="0">
+                            <fmt:message key="index.dns-warning">
+                                <fmt:param><a href='dns-check.jsp'></fmt:param>
+                                <fmt:param></a></fmt:param>
+                            </fmt:message>
+                        <%
+                        }
+                    %>
                 </td>
             </tr>
             <tr>
@@ -302,6 +333,10 @@
                     <%= JiveGlobals.getLocale() %> / <%= JiveGlobals.getTimeZone().getDisplayName(JiveGlobals.getLocale()) %>
                     (<%= (JiveGlobals.getTimeZone().getRawOffset()/1000/60/60) %> GMT)
                 </td>
+            </tr>
+            <tr>
+                <td class="c1"><fmt:message key="index.process_owner" /></td>
+                <td class="c2"><%= System.getProperty("user.name") %></td>
             </tr>
             <tr>
                 <td class="c1"><fmt:message key="index.memory" /></td>
@@ -371,19 +406,18 @@
             <a href="<%= blogFeedRSS %>" class="jive-feed-icon"><img src="images/feed-icon-16x16.gif" alt="" style="border:0;" /></a>
             <h4><fmt:message key="index.cs_blog" /></h4>
             <% long nowTime = System.currentTimeMillis();
-                if (lastBlogFeed == null || lastReleaseFeed == null || nowTime - lastRSSFetch > 21600000) {
+                if (lastBlogFeed == null || nowTime - lastRSSFetch > 21600000) {
 
                     FeedFetcherCache feedInfoCache = HashMapFeedInfoCache.getInstance();
                     FeedFetcher feedFetcher = new HttpClientWithTimeoutFeedFetcher(feedInfoCache);
 
                     try {
                         lastBlogFeed = feedFetcher.retrieveFeed(new URL(blogFeedRSS));
-                        lastReleaseFeed = feedFetcher.retrieveFeed(new URL(releaseFeedRSS));
 
                         lastRSSFetch = nowTime;
                     }
                     catch (Throwable throwable) {
-                    	LoggerFactory.getLogger("index.jsp").warn("Failed to fetch RSS feed:", throwable);
+                        LoggerFactory.getLogger("index.jsp").warn("Failed to fetch RSS feed:", throwable);
                     }
                 }
 
@@ -391,7 +425,7 @@
                 if (lastBlogFeed != null && !lastBlogFeed.getEntries().isEmpty()) {
 
                     List entries = lastBlogFeed.getEntries();
-                    for (int i = 0; i < entries.size() && i < 3; i++) {
+                    for (int i = 0; i < entries.size() && i < 7; i++) {
                         SyndEntry entry = (SyndEntry) entries.get(i); %>
                         <h5><a href="<%= entry.getLink() %>" target="_blank"><%= entry.getTitle()%></a>,
                         <span class="jive-blog-date"><%= JiveGlobals.formatDate(entry.getPublishedDate())%></span></h5>
@@ -401,19 +435,6 @@
                     <fmt:message key="index.cs_blog.unavailable" />
                  <% }
 
-                 %><div class="jive-bottom-line"></div><%
-                if (lastReleaseFeed != null && !lastReleaseFeed.getEntries().isEmpty()) {
-
-                    List entries = lastReleaseFeed.getEntries();
-                    for (int i = 0; i < entries.size() && i < 3; i++) {
-                        SyndEntry entry = (SyndEntry) entries.get(i); %>
-                        <h5><a href="<%= entry.getLink() %>" target="_blank"><%= entry.getTitle()%></a>,
-                        <span class="jive-blog-date"><%= JiveGlobals.formatDate(entry.getPublishedDate())%></span></h5>
-                    <% }
-
-                } else { %>
-                    <fmt:message key="index.cs_blog.unavailable" />
-                 <% }
             %>
 
         </div>

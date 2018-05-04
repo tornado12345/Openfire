@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 2654 $
- * $Date: 2005-08-14 14:40:32 -0300 (Sun, 14 Aug 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,7 +69,7 @@ import org.slf4j.LoggerFactory;
  */
 public class POP3AuthProvider implements AuthProvider {
 
-	private static final Logger Log = LoggerFactory.getLogger(POP3AuthProvider.class);
+    private static final Logger Log = LoggerFactory.getLogger(POP3AuthProvider.class);
 
     private Cache<String, String> authCache = null;
     private String host = null;
@@ -239,5 +235,25 @@ public class POP3AuthProvider implements AuthProvider {
     @Override
     public boolean isScramSupported() {
         return false;
+    }
+
+    @Override
+    public String getSalt(String username) throws UnsupportedOperationException, UserNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getIterations(String username) throws UnsupportedOperationException, UserNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public String getServerKey(String username) throws UnsupportedOperationException, UserNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public String getStoredKey(String username) throws UnsupportedOperationException, UserNotFoundException {
+        throw new UnsupportedOperationException();
     }
 }

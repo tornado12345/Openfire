@@ -1,7 +1,4 @@
-/**
- * $Revision: 1116 $
- * $Date: 2005-03-10 15:18:08 -0800 (Thu, 10 Mar 2005) $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -219,7 +216,42 @@ public class HybridAuthProvider implements AuthProvider {
     public void setPassword(String username, String password)
             throws UserNotFoundException, UnsupportedOperationException
     {
-        throw new UnsupportedOperationException();
+      // Check overrides first.
+      if (primaryOverrides.contains(username.toLowerCase())) {
+          primaryProvider.setPassword(username, password);
+          return;
+      }
+      else if (secondaryOverrides.contains(username.toLowerCase())) {
+          secondaryProvider.setPassword(username, password);
+          return;
+      }
+      else if (tertiaryOverrides.contains(username.toLowerCase())) {
+          tertiaryProvider.setPassword(username, password);
+          return;
+      }
+
+      // Now perform normal
+      try {
+          primaryProvider.setPassword(username, password);
+      }
+      catch (UserNotFoundException | UnsupportedOperationException ue) {
+          if (secondaryProvider != null) {
+              try {
+                  secondaryProvider.setPassword(username, password);
+              }
+              catch (UserNotFoundException | UnsupportedOperationException ue2) {
+                  if (tertiaryProvider != null) {
+                      tertiaryProvider.setPassword(username, password);
+                  }
+                  else {
+                      throw ue2;
+                  }
+              }
+          }
+          else {
+              throw ue;
+          }
+      }
     }
 
     @Override
@@ -231,5 +263,31 @@ public class HybridAuthProvider implements AuthProvider {
     public boolean isScramSupported() {
         // TODO Auto-generated method stub
         return false;
+    }
+
+    @Override
+    public String getSalt(String username) throws UnsupportedOperationException, UserNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getIterations(String username) throws UnsupportedOperationException, UserNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public String getServerKey(String username) throws UnsupportedOperationException, UserNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public String getStoredKey(String username) throws UnsupportedOperationException, UserNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    boolean isProvider(final Class<? extends AuthProvider> clazz) {
+        return (primaryProvider != null && clazz.isAssignableFrom(primaryProvider.getClass()))
+            || (secondaryProvider != null && clazz.isAssignableFrom(secondaryProvider.getClass()))
+            ||(tertiaryProvider != null && clazz.isAssignableFrom(tertiaryProvider.getClass()));
     }
 }

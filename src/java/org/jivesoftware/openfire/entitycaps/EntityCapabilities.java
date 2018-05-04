@@ -1,8 +1,4 @@
-/**
- * $RCSfile: $
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -114,15 +110,15 @@ public class EntityCapabilities implements Cacheable, Externalizable {
     }
     
     String getVerAttribute() {
-    	return this.verAttribute;
+        return this.verAttribute;
     }
 
     void setHashAttribute(String hashAttribute) {
-    	this.hashAttribute = hashAttribute;
+        this.hashAttribute = hashAttribute;
     }
 
     String getHashAttribute() {
-    	return this.hashAttribute;
+        return this.hashAttribute;
     }
     
     @Override

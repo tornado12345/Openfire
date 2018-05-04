@@ -13,11 +13,9 @@ import java.io.IOException;
 import java.security.*;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
+import java.security.cert.CertificateParsingException;
 import java.security.cert.X509Certificate;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 /**
  * A wrapper class for a store of certificates, its metadata (password, location) and related functionality that is
@@ -46,7 +44,20 @@ public class IdentityStore extends CertificateStore
 
         try
         {
-            final KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance( KeyManagerFactory.getDefaultAlgorithm() );
+            KeyManagerFactory keyManagerFactory;
+            try
+            {
+                // OF-1501: If multiple certificates are available, the 'NewSunX509' implementation in the SunJSSE
+                // provider makes the effort to pick a certificate with the appropriate key usage and prefers valid
+                // to expired certificates.
+                keyManagerFactory = KeyManagerFactory.getInstance( "NewSunX509" );
+            }
+            catch ( NoSuchAlgorithmException e )
+            {
+                Log.info( "Unable to load the 'NewSunX509' KeyManager implementation. Will fall back to the default." );
+                keyManagerFactory = KeyManagerFactory.getInstance( KeyManagerFactory.getDefaultAlgorithm() );
+            }
+
             keyManagerFactory.init( this.getStore(), configuration.getPassword() );
         }
         catch ( NoSuchAlgorithmException | UnrecoverableKeyException | KeyStoreException ex )
@@ -100,7 +111,7 @@ public class IdentityStore extends CertificateStore
 
             return pemCSR;
         }
-        catch ( IOException | KeyStoreException | UnrecoverableKeyException | NoSuchAlgorithmException | OperatorCreationException e )
+        catch ( IOException | KeyStoreException | UnrecoverableKeyException | NoSuchAlgorithmException | OperatorCreationException | CertificateParsingException e )
         {
             throw new CertificateStoreConfigException( "Cannot generate CSR for alias '"+ alias +"'", e );
         }
@@ -204,6 +215,73 @@ public class IdentityStore extends CertificateStore
     }
 
     /**
+     * Imports a certificate and the private key that was used to generate the certificate, replacing any previously
+     * installed entries for the same domain.
+     *
+     * This method will import the certificate and key in the store using a unique alias. This alias is returned.
+     *
+     * This method will fail when the provided certificate does not match the domain of this XMPP service.
+     *
+     * @param pemCertificates a PEM representation of the certificate or certificate chain (cannot be null or empty).
+     * @param pemPrivateKey   a PEM representation of the private key (cannot be null or empty).
+     * @param passPhrase      optional pass phrase (must be present if the private key is encrypted).
+     * @return The alias that was used (never null).
+     */
+    public String replaceCertificate( String pemCertificates, String pemPrivateKey, String passPhrase ) throws CertificateStoreConfigException
+    {
+        if ( pemCertificates == null || pemCertificates.trim().isEmpty() )
+        {
+            throw new IllegalArgumentException( "Argument 'pemCertificates' cannot be null or an empty String." );
+        }
+        if ( pemPrivateKey == null || pemPrivateKey.trim().isEmpty() )
+        {
+            throw new IllegalArgumentException( "Argument 'pemPrivateKey' cannot be null or an empty String." );
+        }
+        pemCertificates = pemCertificates.trim();
+
+        try
+        {
+            // From its PEM representation, parse the certificates.
+            final Collection<X509Certificate> certificates = CertificateManager.parseCertificates( pemCertificates );
+            if ( certificates.isEmpty() )
+            {
+                throw new CertificateStoreConfigException( "No certificate was found in the input." );
+            }
+
+            // Note that PKCS#7 does not require a specific order for the certificates in the file - ordering is needed.
+            final List<X509Certificate> ordered = CertificateUtils.order( certificates );
+
+            // Of the ordered chain, the first certificate should be for our domain.
+            if ( !isForThisDomain( ordered.get( 0 ) ) )
+            {
+                throw new CertificateStoreConfigException( "The supplied certificate chain does not cover the domain of this XMPP service." );
+            }
+
+            // From its PEM representation (and pass phrase), parse the private key.
+            final PrivateKey privateKey = CertificateManager.parsePrivateKey( pemPrivateKey, passPhrase );
+
+            // All appears to be in order. Replace any entries in the store.
+            removeAllDomainEntries();
+            final String alias = generateUniqueAlias();
+            store.setKeyEntry( alias, privateKey, configuration.getPassword(), ordered.toArray( new X509Certificate[ ordered.size() ] ) );
+
+            persist();
+
+            Log.info( "Replaced all private keys and corresponding certificate chains with a new private key and certificate chain." );
+
+            return alias;
+        }
+        catch ( CertificateException | KeyStoreException | IOException e )
+        {
+            reload(); // reset state of the store.
+            throw new CertificateStoreConfigException( "Unable to install a certificate into an identity store.", e );
+        }
+
+        // TODO Notify listeners that a new certificate has been replaced.
+    }
+
+
+    /**
      * Imports a certificate and the private key that was used to generate the certificate.
      *
      * This method will import the certificate and key in the store using a unique alias. This alias is returned.
@@ -217,22 +295,7 @@ public class IdentityStore extends CertificateStore
      */
     public String installCertificate( String pemCertificates, String pemPrivateKey, String passPhrase ) throws CertificateStoreConfigException
     {
-        // Generate a unique alias.
-        final String domain = XMPPServer.getInstance().getServerInfo().getXMPPDomain();
-        int index = 1;
-        String alias = domain + "_" + index;
-        try
-        {
-            while ( store.containsAlias( alias ) )
-            {
-                index = index + 1;
-                alias = domain + "_" + index;
-            }
-        }
-        catch ( KeyStoreException e )
-        {
-            throw new CertificateStoreConfigException( "Unable to install a certificate into an identity store.", e );
-        }
+        final String alias = generateUniqueAlias();
 
         // Perform the installation using the generated alias.
         installCertificate( alias, pemCertificates, pemPrivateKey, passPhrase );
@@ -300,6 +363,9 @@ public class IdentityStore extends CertificateStore
             store.setKeyEntry( alias, privateKey, configuration.getPassword(), ordered.toArray( new X509Certificate[ ordered.size() ] ) );
 
             persist();
+
+            Log.info( "Installed a new private key and corresponding certificate chain." );
+
         }
         catch ( CertificateException | KeyStoreException | IOException e )
         {
@@ -378,6 +444,69 @@ public class IdentityStore extends CertificateStore
     }
 
     /**
+     * Checks if the store contains a certificate of a particular algorithm that contains at least all of the identities
+     * of this server (which includes the XMPP domain name, but also its hostname, and XMPP addresses of components
+     * that are currently being hosted).
+     *
+     * This method will not distinguish between self-signed and non-self-signed certificates.
+     */
+    public synchronized boolean containsAllIdentityCertificate( String algorithm ) throws CertificateStoreConfigException
+    {
+        final Collection<String> dns = CertificateManager.determineSubjectAlternateNameDnsNameValues();
+
+        try
+        {
+            for ( final String alias : Collections.list( store.aliases() ) )
+            {
+                final Set<String> missingDns = new HashSet<>();
+
+                final Certificate certificate = store.getCertificate( alias );
+                if ( !( certificate instanceof X509Certificate ) )
+                {
+                    continue;
+                }
+
+                if ( !certificate.getPublicKey().getAlgorithm().equalsIgnoreCase( algorithm ) )
+                {
+                    continue;
+                }
+
+                final List<String> serverIdentities = CertificateManager.getServerIdentities( (X509Certificate) certificate );
+
+                // Are all of our DNS names covered?
+                for ( String dnsId : dns )
+                {
+                    boolean found = false;
+                    for ( String identity : serverIdentities )
+                    {
+                        if ( !DNSUtil.isNameCoveredByPattern( dnsId, identity ) )
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if ( !found )
+                    {
+                        Log.info( "Certificate with alias '{}' is missing DNS identity '{}'.", alias, dnsId );
+                        missingDns.add( dnsId );
+                    }
+                }
+
+                if ( missingDns.isEmpty() )
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        catch ( KeyStoreException e )
+        {
+            throw new CertificateStoreConfigException( "An exception occurred while searching for " + algorithm + " certificates that match the Openfire domain.", e );
+        }
+    }
+
+    /**
      * Populates the key store with a self-signed certificate for the domain of this XMPP service.
      */
     public synchronized void addSelfSignedDomainCertificate( String algorithm ) throws CertificateStoreConfigException
@@ -404,6 +533,7 @@ public class IdentityStore extends CertificateStore
         final String name = JiveGlobals.getProperty( "xmpp.domain" ).toLowerCase();
         final String alias = name + "_" + algorithm.toLowerCase();
         final int validityInDays = 5*365;
+        final Set<String> sanDnsNames = CertificateManager.determineSubjectAlternateNameDnsNameValues();
 
         Log.info( "Generating a new private key and corresponding self-signed certificate for domain name '{}', using the {} algorithm (sign-algorithm: {} with a key size of {} bits). Certificate will be valid for {} days.", name, algorithm, signAlgorithm, keySize, validityInDays );
         // Generate public and private keys
@@ -412,7 +542,7 @@ public class IdentityStore extends CertificateStore
             final KeyPair keyPair = generateKeyPair( algorithm.toUpperCase(), keySize );
 
             // Create X509 certificate with keys and specified domain
-            final X509Certificate cert = CertificateManager.createX509V3Certificate( keyPair, validityInDays, name, name, name, signAlgorithm );
+            final X509Certificate cert = CertificateManager.createX509V3Certificate( keyPair, validityInDays, name, name, name, signAlgorithm, sanDnsNames );
 
             // Store new certificate and private key in the key store
             store.setKeyEntry( alias, keyPair.getPrivate(), configuration.getPassword(), new X509Certificate[]{cert} );
@@ -472,5 +602,66 @@ public class IdentityStore extends CertificateStore
 
         Log.info( "The supplied certificate chain does not cover the domain of this XMPP service ('" + domainName + "'). Instead, it covers " + Arrays.toString( serverIdentities.toArray( new String[ serverIdentities.size() ] ) ) );
         return false;
+    }
+
+    /**
+     * Generates an alias that is currently unused in this store.
+     *
+     * @return An alias (never null).
+     */
+    protected synchronized String generateUniqueAlias() throws CertificateStoreConfigException
+    {
+        final String domain = XMPPServer.getInstance().getServerInfo().getXMPPDomain();
+        int index = 1;
+        String alias = domain + "_" + index;
+        try
+        {
+            while ( store.containsAlias( alias ) )
+            {
+                index = index + 1;
+                alias = domain + "_" + index;
+            }
+            return alias;
+        }
+        catch ( KeyStoreException e )
+        {
+            throw new CertificateStoreConfigException( "Unable to generate a unique alias for this identity store.", e );
+        }
+    }
+
+    /**
+     * Removes all entries that reflect the local domain.
+     *
+     * This method iterates over all entries, and removes those that match the domain of this server.
+     *
+     * Note that the changes are not persisted by this method (as it is expected to be used in tandem with an insert.
+     */
+    protected synchronized void removeAllDomainEntries() throws KeyStoreException
+    {
+        final String domainName = XMPPServer.getInstance().getServerInfo().getXMPPDomain();
+
+        final Set<String> toDelete = new HashSet<>();
+        for ( final String alias : Collections.list( store.aliases() ) )
+        {
+            final Certificate certificate = store.getCertificate( alias );
+            if ( !( certificate instanceof X509Certificate ) )
+            {
+                continue;
+            }
+
+            for ( String identity : CertificateManager.getServerIdentities( (X509Certificate) certificate ) )
+            {
+                if ( DNSUtil.isNameCoveredByPattern( domainName, identity ) )
+                {
+                    toDelete.add( alias );
+                    break;
+                }
+            }
+        }
+
+        for ( final String alias : toDelete )
+        {
+            store.deleteEntry( alias );
+        }
     }
 }

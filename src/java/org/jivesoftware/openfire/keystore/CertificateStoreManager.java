@@ -1,5 +1,6 @@
 package org.jivesoftware.openfire.keystore;
 
+import org.bouncycastle.bcpg.ElGamalSecretBCPGKey;
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.container.BasicModule;
 import org.jivesoftware.openfire.spi.ConnectionListener;
@@ -11,6 +12,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -29,6 +32,8 @@ public class CertificateStoreManager extends BasicModule
     private final ConcurrentMap<CertificateStoreConfiguration, IdentityStore>  identityStores      = new ConcurrentHashMap<>();
     private final ConcurrentMap<CertificateStoreConfiguration, TrustStore>     trustStores         = new ConcurrentHashMap<>();
 
+    private CertificateStoreWatcher storeWatcher;
+
     public CertificateStoreManager( )
     {
         super( "Certificate Store Manager" );
@@ -39,7 +44,9 @@ public class CertificateStoreManager extends BasicModule
     {
         super.initialize( server );
 
-        for ( ConnectionType type : ConnectionType.values() )
+        storeWatcher = new CertificateStoreWatcher();
+
+        for ( final ConnectionType type : ConnectionType.values() )
         {
             try
             {
@@ -49,6 +56,7 @@ public class CertificateStoreManager extends BasicModule
                 {
                     final IdentityStore store = new IdentityStore( identityStoreConfiguration, false );
                     identityStores.put( identityStoreConfiguration, store );
+                    storeWatcher.watch( store );
                 }
                 typeToIdentityStore.put( type, identityStoreConfiguration );
             }
@@ -65,6 +73,7 @@ public class CertificateStoreManager extends BasicModule
                 {
                     final TrustStore store = new TrustStore( trustStoreConfiguration, false );
                     trustStores.put( trustStoreConfiguration, store );
+                    storeWatcher.watch( store );
                 }
                 typeToTrustStore.put( type, trustStoreConfiguration );
             }
@@ -78,6 +87,7 @@ public class CertificateStoreManager extends BasicModule
     @Override
     public synchronized void destroy()
     {
+        storeWatcher.destroy();
         typeToIdentityStore.clear();
         typeToTrustStore.clear();
         identityStores.clear();
@@ -124,6 +134,7 @@ public class CertificateStoreManager extends BasicModule
                 // This constructor can throw an exception. If it does, the state of the manager should not have already changed.
                 final IdentityStore store = new IdentityStore( configuration, createIfAbsent );
                 identityStores.put( configuration, store );
+                storeWatcher.watch( store );
             }
 
             typeToIdentityStore.put( type, configuration );
@@ -132,7 +143,11 @@ public class CertificateStoreManager extends BasicModule
             // If the old store is not used by any other type, it can be shut down.
             if ( oldConfig != null && !typeToIdentityStore.containsValue( oldConfig ) )
             {
-                identityStores.remove( oldConfig );
+                final IdentityStore store = identityStores.remove( oldConfig );
+                if ( store != null )
+                {
+                    storeWatcher.unwatch( store );
+                }
             }
 
             // Update all connection listeners that were using the old configuration.
@@ -172,6 +187,7 @@ public class CertificateStoreManager extends BasicModule
                 // This constructor can throw an exception. If it does, the state of the manager should not have already changed.
                 final TrustStore store = new TrustStore( configuration, createIfAbsent );
                 trustStores.put( configuration, store );
+                storeWatcher.watch( store );
             }
 
             typeToTrustStore.put( type, configuration );
@@ -180,7 +196,11 @@ public class CertificateStoreManager extends BasicModule
             // If the old store is not used by any other type, it can be shut down.
             if ( oldConfig != null && !typeToTrustStore.containsValue( oldConfig ) )
             {
-                trustStores.remove( oldConfig );
+                final TrustStore store = trustStores.remove( oldConfig );
+                if ( store != null )
+                {
+                    storeWatcher.unwatch( store );
+                }
             }
 
             // Update all connection listeners that were using the old configuration.
@@ -331,7 +351,17 @@ public class CertificateStoreManager extends BasicModule
     static String getTrustStoreLocation( ConnectionType type )
     {
         final String propertyName = type.getPrefix()  + "truststore";
-        final String defaultValue = "resources" + File.separator + "security" + File.separator + "truststore";
+        final String defaultValue;
+
+        // OF-1191: For client-oriented connection types, Openfire traditionally uses a different truststore.
+        if ( Arrays.asList( ConnectionType.SOCKET_C2S, ConnectionType.BOSH_C2S, ConnectionType.WEBADMIN ).contains( type ) )
+        {
+            defaultValue = "resources" + File.separator + "security" + File.separator + "client.truststore";
+        }
+        else
+        {
+            defaultValue = "resources" + File.separator + "security" + File.separator + "truststore";
+        }
 
         if ( type.getFallback() == null )
         {

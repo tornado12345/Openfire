@@ -1,7 +1,4 @@
-/**
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,17 +37,17 @@ public class MultiplexerConnectionHandler extends ConnectionHandler {
     }
 
     @Override
-	NIOConnection createNIOConnection(IoSession session) {
+    NIOConnection createNIOConnection(IoSession session) {
         return new NIOConnection(session, new MultiplexerPacketDeliverer(), configuration );
     }
 
     @Override
-	StanzaHandler createStanzaHandler(NIOConnection connection) {
+    StanzaHandler createStanzaHandler(NIOConnection connection) {
         return new MultiplexerStanzaHandler(XMPPServer.getInstance().getPacketRouter(), connection);
     }
 
     @Override
-	int getMaxIdleTime() {
+    int getMaxIdleTime() {
         return JiveGlobals.getIntProperty("xmpp.multiplex.idle", 5 * 60 * 1000) / 1000;
     }
 }

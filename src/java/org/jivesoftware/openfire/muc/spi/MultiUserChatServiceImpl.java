@@ -1,8 +1,4 @@
-/**
- * $RCSfile: MultiUserChatServerImpl.java,v $
- * $Revision: 3036 $
- * $Date: 2005-11-07 15:15:00 -0300 (Mon, 07 Nov 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,17 +16,7 @@
 
 package org.jivesoftware.openfire.muc.spi;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Queue;
-import java.util.Set;
-import java.util.TimerTask;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -45,6 +31,7 @@ import org.jivesoftware.openfire.PacketRouter;
 import org.jivesoftware.openfire.RoutingTable;
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.XMPPServerListener;
+import org.jivesoftware.openfire.auth.UnauthorizedException;
 import org.jivesoftware.openfire.cluster.ClusterManager;
 import org.jivesoftware.openfire.disco.DiscoInfoProvider;
 import org.jivesoftware.openfire.disco.DiscoItem;
@@ -55,6 +42,7 @@ import org.jivesoftware.openfire.event.GroupEventDispatcher;
 import org.jivesoftware.openfire.group.ConcurrentGroupList;
 import org.jivesoftware.openfire.group.GroupAwareList;
 import org.jivesoftware.openfire.group.GroupJID;
+import org.jivesoftware.openfire.handler.IQHandler;
 import org.jivesoftware.openfire.muc.HistoryStrategy;
 import org.jivesoftware.openfire.muc.MUCEventDelegate;
 import org.jivesoftware.openfire.muc.MUCEventDispatcher;
@@ -103,7 +91,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
         ServerItemsProvider, DiscoInfoProvider, DiscoItemsProvider, XMPPServerListener
 {
 
-	private static final Logger Log = LoggerFactory.getLogger(MultiUserChatServiceImpl.class);
+    private static final Logger Log = LoggerFactory.getLogger(MultiUserChatServiceImpl.class);
 
     /**
      * The time to elapse between clearing of idle chat users.
@@ -139,9 +127,9 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
     private String chatDescription = null;
 
     /**
-     * chatrooms managed by this manager, table: key room name (String); value ChatRoom
+     * LocalMUCRoom chat manager which supports simple chatroom management
      */
-    private Map<String, LocalMUCRoom> rooms = new ConcurrentHashMap<>();
+    private LocalMUCRoomManager localMUCRoomManager = new LocalMUCRoomManager();
 
     /**
      * Chat users managed by this manager. This includes only users connected to this JVM.
@@ -167,6 +155,11 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
      * The handler of search requests ('jabber:iq:search' namespace).
      */
     private IQMUCSearchHandler searchHandler = null;
+
+    /**
+     * Plugin (etc) provided IQ Handlers for MUC:
+     */
+    private Map<String,IQHandler> iqHandlers = null;
 
     /**
      * The total time all agents took to chat *
@@ -264,20 +257,20 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
     private List<Element> extraDiscoIdentities = new ArrayList<>();
 
     /**
-	 * Create a new group chat server.
-	 *
-	 * @param subdomain
-	 *            Subdomain portion of the conference services (for example,
-	 *            conference for conference.example.org)
-	 * @param description
-	 *            Short description of service for disco and such. If
-	 *            <tt>null</tt> or empty, a default value will be used.
-	 * @param isHidden
-	 *            True if this service should be hidden from services views.
-	 * @throws IllegalArgumentException
-	 *             if the provided subdomain is an invalid, according to the JID
-	 *             domain definition.
-	 */
+     * Create a new group chat server.
+     *
+     * @param subdomain
+     *            Subdomain portion of the conference services (for example,
+     *            conference for conference.example.org)
+     * @param description
+     *            Short description of service for disco and such. If
+     *            <tt>null</tt> or empty, a default value will be used.
+     * @param isHidden
+     *            True if this service should be hidden from services views.
+     * @throws IllegalArgumentException
+     *             if the provided subdomain is an invalid, according to the JID
+     *             domain definition.
+     */
     public MultiUserChatServiceImpl(String subdomain, String description, Boolean isHidden) {
         // Check subdomain and throw an IllegalArgumentException if its invalid
         new JID(null,subdomain + "." + XMPPServer.getInstance().getServerInfo().getXMPPDomain(), null);
@@ -291,6 +284,23 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
         }
         this.isHidden = isHidden;
         historyStrategy = new HistoryStrategy(null);
+    }
+
+    @Override
+    public void addIQHandler(IQHandler iqHandler) {
+        if (this.iqHandlers == null) {
+            this.iqHandlers = new HashMap<>();
+        }
+        this.iqHandlers.put(iqHandler.getInfo().getNamespace(), iqHandler);
+    }
+
+    @Override
+    public void removeIQHandler(IQHandler iqHandler) {
+        if (this.iqHandlers != null) {
+            if (iqHandler == this.iqHandlers.get(iqHandler.getInfo().getNamespace())) {
+                this.iqHandlers.remove(iqHandler.getInfo().getNamespace());
+            }
+        }
     }
 
     @Override
@@ -401,7 +411,24 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
         else if ("urn:xmpp:ping".equals(namespace)) {
             router.route( IQ.createResultIQ(iq) );
         }
-        else {
+        else if (this.iqHandlers != null) {
+            IQHandler h = this.iqHandlers.get(namespace);
+            if (h != null) {
+                try {
+                    IQ reply = h.handleIQ(iq);
+                    if (reply != null) {
+                        router.route(reply);
+                    }
+                } catch (UnauthorizedException e) {
+                    IQ reply = IQ.createResultIQ(iq);
+                    reply.setType(IQ.Type.error);
+                    reply.setError(PacketError.Condition.service_unavailable);
+                    router.route(reply);
+                }
+                return true;
+            }
+            return false;
+        } else {
             return false;
         }
         return true;
@@ -415,7 +442,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
 
     @Override
     public void shutdown() {
-		enableService( false, false );
+        enableService( false, false );
     }
 
     @Override
@@ -447,7 +474,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
          * Remove any user that has been idle for longer than the user timeout time.
          */
         @Override
-		public void run() {
+        public void run() {
             checkForTimedOutUsers();
         }
     }
@@ -564,7 +591,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
      */
     private class LogConversationTask extends TimerTask {
         @Override
-		public void run() {
+        public void run() {
             try {
                 logConversation();
             }
@@ -608,27 +635,20 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
      */
     private class CleanupTask extends TimerTask {
         @Override
-		public void run() {
+        public void run() {
             if (ClusterManager.isClusteringStarted() && !ClusterManager.isSeniorClusterMember()) {
                 // Do nothing if we are in a cluster and this JVM is not the senior cluster member
                 return;
             }
             try {
-                cleanupRooms();
+                localMUCRoomManager.cleanupRooms(getCleanupDate());
             }
             catch (Throwable e) {
                 Log.error(LocaleUtils.getLocalizedString("admin.error"), e);
             }
         }
     }
-
-    private void cleanupRooms() {
-        for (MUCRoom room : rooms.values()) {
-            if (room.getEmptyDate() != null && room.getEmptyDate().before(getCleanupDate())) {
-                removeChatRoom(room.getName());
-            }
-        }
-    }
+ 
 
     @Override
     public MUCRoom getChatRoom(String roomName, JID userjid) throws NotAllowedException {
@@ -636,7 +656,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
         boolean loaded = false;
         boolean created = false;
         synchronized (roomName.intern()) {
-            room = rooms.get(roomName);
+            room = localMUCRoomManager.getRoom(roomName);
             if (room == null) {
                 room = new LocalMUCRoom(this, roomName, router);
                 // If the room is persistent load the configuration values from the DB
@@ -668,7 +688,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
                         // The room does not exist so check for creation permissions
                         // Room creation is always allowed for sysadmin
                         final JID bareJID = userjid.asBareJID();
-						if (isRoomCreationRestricted() && !sysadmins.includes(bareJID)) {
+                        if (isRoomCreationRestricted() && !sysadmins.includes(bareJID)) {
                             // The room creation is only allowed for certain JIDs
                             if (!allowedToCreate.includes(bareJID)) {
                                 // The user is not in the list of allowed JIDs to create a room so raise
@@ -680,7 +700,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
                         created = true;
                     }
                 }
-                rooms.put(roomName, room);
+                localMUCRoomManager.addRoom(roomName, room);
             }
         }
         if (created) {
@@ -702,11 +722,11 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
     @Override
     public MUCRoom getChatRoom(String roomName) {
         boolean loaded = false;
-        LocalMUCRoom room = rooms.get(roomName);
+        LocalMUCRoom room = localMUCRoomManager.getRoom(roomName);
         if (room == null) {
             // Check if the room exists in the databclase and was not present in memory
             synchronized (roomName.intern()) {
-                room = rooms.get(roomName);
+                room = localMUCRoomManager.getRoom(roomName);
                 if (room == null) {
                     room = new LocalMUCRoom(this, roomName, router);
                     // If the room is persistent load the configuration values from the DB
@@ -716,7 +736,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
                         // room may be an old room that was not present in memory)
                         MUCPersistenceManager.loadFromDB(room);
                         loaded = true;
-                        rooms.put(roomName, room);
+                        localMUCRoomManager.addRoom(roomName,room);
                     }
                     catch (IllegalArgumentException e) {
                         // The room does not exist so do nothing
@@ -734,17 +754,17 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
 
     @Override
     public void refreshChatRoom(String roomName) {
-        rooms.remove(roomName);
+        localMUCRoomManager.removeRoom(roomName);
         getChatRoom(roomName);
     }
 
     public LocalMUCRoom getLocalChatRoom(String roomName) {
-        return rooms.get(roomName);
+        return localMUCRoomManager.getRoom(roomName);
     }
 
     @Override
     public List<MUCRoom> getChatRooms() {
-        return new ArrayList<MUCRoom>(rooms.values());
+        return new ArrayList<MUCRoom>(localMUCRoomManager.getRooms());
     }
 
     @Override
@@ -776,20 +796,22 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
      */
     @Override
     public void chatRoomAdded(LocalMUCRoom room) {
-        rooms.put(room.getName(), room);
+        localMUCRoomManager.addRoom(room.getName(), room) ;
     }
 
     private void removeChatRoom(String roomName, boolean notify) {
-        MUCRoom room = rooms.remove(roomName);
-		Log.info("removing chat room:" + roomName + "|" + room.getClass().getName());
-		if (room instanceof LocalMUCRoom)
-			GroupEventDispatcher.removeListener((LocalMUCRoom) room);
+        MUCRoom room = localMUCRoomManager.removeRoom(roomName);
         if (room != null) {
-            totalChatTime += room.getChatLength();
+            Log.info("removing chat room:" + roomName + "|" + room.getClass().getName());
+            if (room instanceof LocalMUCRoom)
+                GroupEventDispatcher.removeListener((LocalMUCRoom) room);
+           totalChatTime += room.getChatLength();
             if (notify) {
                 // Notify other cluster nodes that a room has been removed
                 CacheFactory.doClusterTask(new RoomRemovedEvent((LocalMUCRoom)room));
             }
+        } else {
+            Log.info("No chatroom {} during removal.", roomName);
         }
     }
 
@@ -844,7 +866,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
             if (user == null) {
                 if (roomName != null) {
                     // Check if the JID belong to a user hosted in another cluster node
-                    LocalMUCRoom localMUCRoom = rooms.get(roomName);
+                    LocalMUCRoom localMUCRoom = localMUCRoomManager.getRoom(roomName);
                     if (localMUCRoom != null) {
                         MUCRole occupant = localMUCRoom.getOccupantByFullJID(userjid);
                         if (occupant != null && !occupant.isLocal()) {
@@ -862,7 +884,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
     @Override
     public Collection<MUCRole> getMUCRoles(JID user) {
         List<MUCRole> userRoles = new ArrayList<>();
-        for (LocalMUCRoom room : rooms.values()) {
+        for (LocalMUCRoom room : localMUCRoomManager.getRooms()) {
             MUCRole role = room.getOccupantByFullJID(user);
             if (role != null) {
                 userRoles.add(role);
@@ -971,17 +993,17 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
 
     @Override
     public void addSysadmins(Collection<JID> userJIDs) {
-    	for (JID userJID : userJIDs) {
-    		addSysadmin(userJID);
-    	}
+        for (JID userJID : userJIDs) {
+            addSysadmin(userJID);
+        }
     }
 
     @Override
     public void addSysadmin(JID userJID) {
-    	final JID bareJID = userJID.asBareJID();
+        final JID bareJID = userJID.asBareJID();
 
         if (!sysadmins.contains(userJID)) {
-        	sysadmins.add(bareJID);
+            sysadmins.add(bareJID);
         }
 
         // CopyOnWriteArray does not allow sorting, so do sorting in temp list.
@@ -992,22 +1014,22 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
         // Update the config.
         String[] jids = new String[sysadmins.size()];
         for (int i = 0; i < jids.length; i++) {
-			jids[i] = sysadmins.get(i).toBareJID();
-		}
+            jids[i] = sysadmins.get(i).toBareJID();
+        }
         MUCPersistenceManager.setProperty(chatServiceName, "sysadmin.jid", fromArray(jids));
     }
 
     @Override
     public void removeSysadmin(JID userJID) {
-    	final JID bareJID = userJID.asBareJID();
+        final JID bareJID = userJID.asBareJID();
 
         sysadmins.remove(bareJID);
 
         // Update the config.
         String[] jids = new String[sysadmins.size()];
         for (int i = 0; i < jids.length; i++) {
-			jids[i] = sysadmins.get(i).toBareJID();
-		}
+            jids[i] = sysadmins.get(i).toBareJID();
+        }
         MUCPersistenceManager.setProperty(chatServiceName, "sysadmin.jid", fromArray(jids));
     }
 
@@ -1073,54 +1095,54 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
 
     @Override
     public void addUsersAllowedToCreate(Collection<JID> userJIDs) {
-    	boolean listChanged = false;
+        boolean listChanged = false;
 
-    	for(JID userJID: userJIDs) {
+        for(JID userJID: userJIDs) {
             // Update the list of allowed JIDs to create MUC rooms. Since we are updating the instance
             // variable there is no need to restart the service
-    		if (!allowedToCreate.contains(userJID)) {
-    			allowedToCreate.add(userJID);
-    			listChanged = true;
-    		}
-    	}
+            if (!allowedToCreate.contains(userJID)) {
+                allowedToCreate.add(userJID);
+                listChanged = true;
+            }
+        }
 
-    	// if nothing was added, there's nothing to update
-    	if(listChanged) {
+        // if nothing was added, there's nothing to update
+        if(listChanged) {
             // CopyOnWriteArray does not allow sorting, so do sorting in temp list.
             List<JID> tempList = new ArrayList<>(allowedToCreate);
             Collections.sort(tempList);
             allowedToCreate = new ConcurrentGroupList<>(tempList);
             // Update the config.
             MUCPersistenceManager.setProperty(chatServiceName, "create.jid", fromCollection(allowedToCreate));
-    	}
+        }
     }
 
     @Override
     public void addUserAllowedToCreate(JID userJID) {
         List<JID> asList = new ArrayList<>();
         asList.add(userJID);
-    	addUsersAllowedToCreate(asList);
+        addUsersAllowedToCreate(asList);
     }
 
     @Override
     public void removeUsersAllowedToCreate(Collection<JID> userJIDs) {
-    	boolean listChanged = false;
+        boolean listChanged = false;
 
-    	for(JID userJID: userJIDs) {
+        for(JID userJID: userJIDs) {
             // Update the list of allowed JIDs to create MUC rooms. Since we are updating the instance
             // variable there is no need to restart the service
             listChanged |= allowedToCreate.remove(userJID);
-    	}
+        }
 
-    	// if none of the JIDs were on the list, there's nothing to update
-    	if(listChanged) {
+        // if none of the JIDs were on the list, there's nothing to update
+        if(listChanged) {
             MUCPersistenceManager.setProperty(chatServiceName, "create.jid", fromCollection(allowedToCreate));
-    	}
+        }
     }
 
     @Override
     public void removeUserAllowedToCreate(JID userJID) {
-    	removeUsersAllowedToCreate(Collections.singleton(userJID));
+        removeUsersAllowedToCreate(Collections.singleton(userJID));
     }
 
     public void initialize(XMPPServer server) {
@@ -1150,7 +1172,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
                     continue;
                 }
                 try {
-                	// could be a group jid
+                    // could be a group jid
                     sysadmins.add(GroupJID.fromString(jid.trim().toLowerCase()).asBareJID());
                 } catch (IllegalArgumentException e) {
                     Log.warn("The 'sysadmin.jid' property contains a value that is not a valid JID. It is ignored. Offending value: '" + jid + "'.", e);
@@ -1173,8 +1195,8 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
                     continue;
                 }
                 try {
-                	// could be a group jid
-            	    allowedToCreate.add(GroupJID.fromString(jid.trim().toLowerCase()).asBareJID());
+                    // could be a group jid
+                    allowedToCreate.add(GroupJID.fromString(jid.trim().toLowerCase()).asBareJID());
                 } catch (IllegalArgumentException e) {
                     Log.warn("The 'create.jid' property contains a value that is not a valid JID. It is ignored. Offending value: '" + jid + "'.", e);
                 }
@@ -1251,7 +1273,6 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
         // Set us up to answer disco item requests
         XMPPServer.getInstance().getIQDiscoItemsHandler().addServerItemsProvider(this);
         XMPPServer.getInstance().getIQDiscoInfoHandler().setServerNodeInfoProvider(this.getServiceDomain(), this);
-        XMPPServer.getInstance().getServerItemsProviders().add(this);
 
         ArrayList<String> params = new ArrayList<>();
         params.clear();
@@ -1259,14 +1280,13 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
         Log.info(LocaleUtils.getLocalizedString("startup.starting.muc", params));
         // Load all the persistent rooms to memory
         for (LocalMUCRoom room : MUCPersistenceManager.loadRoomsFromDB(this, this.getCleanupDate(), router)) {
-            rooms.put(room.getName().toLowerCase(), room);
+            localMUCRoomManager.addRoom(room.getName().toLowerCase(),room);
         }
     }
 
     private void stop() {
         XMPPServer.getInstance().getIQDiscoItemsHandler().removeServerItemsProvider(this);
         XMPPServer.getInstance().getIQDiscoInfoHandler().removeServerNodeInfoProvider(this.getServiceDomain());
-        XMPPServer.getInstance().getServerItemsProviders().remove(this);
         // Remove the route to this service
         routingTable.removeComponentRoute(getAddress());
         broadcastShutdown();
@@ -1312,7 +1332,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
      */
     @Override
     public int getNumberChatRooms() {
-        return rooms.size();
+         return localMUCRoomManager.getNumberChatRooms();
     }
 
     /**
@@ -1351,7 +1371,7 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
     @Override
     public int getNumberRoomOccupants() {
         int total = 0;
-        for (MUCRoom room : rooms.values()) {
+        for (MUCRoom room : localMUCRoomManager.getRooms()) {
             total = total + room.getOccupantsCount();
         }
         return total;
@@ -1409,18 +1429,18 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
     @Override
     public Iterator<DiscoServerItem> getItems() {
         // Check if the service is disabled. Info is not available when
-		// disabled.
-		if (!isServiceEnabled())
-		{
-			return null;
-		}
+        // disabled.
+        if (!isServiceEnabled())
+        {
+            return null;
+        }
 
-		final ArrayList<DiscoServerItem> items = new ArrayList<>();
-		final DiscoServerItem item = new DiscoServerItem(new JID(
-			getServiceDomain()), getDescription(), null, null, this, this);
-		items.add(item);
-		return items.iterator();
-	}
+        final ArrayList<DiscoServerItem> items = new ArrayList<>();
+        final DiscoServerItem item = new DiscoServerItem(new JID(
+            getServiceDomain()), getDescription(), null, null, this, this);
+        items.add(item);
+        return items.iterator();
+    }
 
     @Override
     public Iterator<Element> getIdentities(String name, String node, JID senderJID) {
@@ -1485,8 +1505,8 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
             features.add("jabber:iq:search");
             features.add(ResultSet.NAMESPACE_RESULT_SET_MANAGEMENT);
             if (!extraDiscoFeatures.isEmpty()) {
-				features.addAll(extraDiscoFeatures);
-			}
+                features.addAll(extraDiscoFeatures);
+            }
         }
         else if (name != null && node == null) {
             // Answer the features of a given room
@@ -1527,6 +1547,9 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
                 }
                 else {
                     features.add("muc_temporary");
+                }
+                if (!extraDiscoFeatures.isEmpty()) {
+                    features.addAll(extraDiscoFeatures);
                 }
             }
         }
@@ -1612,14 +1635,14 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
      * @param name Name of identity to remove.
      */
     public void removeExtraIdentity(String name) {
-    	final Iterator<Element> iter = extraDiscoIdentities.iterator();
-    	while (iter.hasNext()) {
-			Element elem = iter.next();
+        final Iterator<Element> iter = extraDiscoIdentities.iterator();
+        while (iter.hasNext()) {
+            Element elem = iter.next();
             if (name.equals(elem.attribute("name").getStringValue())) {
                 iter.remove();
                 break;
             }
-		}
+        }
     }
 
     /**
@@ -1666,25 +1689,25 @@ public class MultiUserChatServiceImpl implements Component, MultiUserChatService
             return null;
         }
         Set<DiscoItem> answer = new HashSet<>();
-		if (name == null && node == null)
-		{
-			// Answer all the public rooms as items
-			for (MUCRoom room : rooms.values())
-			{
-				if (canDiscoverRoom(room, senderJID))
-				{
-					answer.add(new DiscoItem(room.getRole().getRoleAddress(),
-						room.getNaturalLanguageName(), null, null));
-				}
-			}
-		}
+        if (name == null && node == null)
+        {
+            // Answer all the public rooms as items
+            for (MUCRoom room : localMUCRoomManager.getRooms())
+            {
+                if (canDiscoverRoom(room, senderJID))
+                {
+                    answer.add(new DiscoItem(room.getRole().getRoleAddress(),
+                        room.getNaturalLanguageName(), null, null));
+                }
+            }
+        }
         else if (name != null && node == null) {
             // Answer the room occupants as items if that info is publicly available
             MUCRoom room = getChatRoom(name);
             if (room != null && canDiscoverRoom(room, senderJID)) {
                 for (MUCRole role : room.getOccupants()) {
                     // TODO Should we filter occupants that are invisible (presence is not broadcasted)?
-                	answer.add(new DiscoItem(role.getRoleAddress(), null, null, null));
+                    answer.add(new DiscoItem(role.getRoleAddress(), null, null, null));
                 }
             }
         }

@@ -1,7 +1,4 @@
-/**
- * $Revision$
- * $Date$
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,7 +38,7 @@ import org.slf4j.LoggerFactory;
  */
 public class MediaProxy implements SessionListener {
 
-	private static final Logger Log = LoggerFactory.getLogger(MediaProxy.class);
+    private static final Logger Log = LoggerFactory.getLogger(MediaProxy.class);
 
     final private Map<String, MediaProxySession> sessions = new ConcurrentHashMap<>();
 

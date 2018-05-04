@@ -1,8 +1,4 @@
-/**
- * $RCSfile: $
- * $Revision: 2705 $
- * $Date: 2005-08-22 19:00:05 -0300 (Mon, 22 Aug 2005) $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,7 +61,7 @@ import org.xmpp.packet.Packet;
  */
 public class MulticastRouter extends BasicModule implements ServerFeaturesProvider, IQResultListener {
 
-	private static final Logger Log = LoggerFactory.getLogger(MulticastRouter.class);
+    private static final Logger Log = LoggerFactory.getLogger(MulticastRouter.class);
 
     private static final String NAMESPACE = "http://jabber.org/protocol/address";
 
@@ -404,7 +400,7 @@ public class MulticastRouter extends BasicModule implements ServerFeaturesProvid
     }
 
     @Override
-	public void initialize(XMPPServer server) {
+    public void initialize(XMPPServer server) {
         super.initialize(server);
         this.server = server;
         this.packetRouter = server.getPacketRouter();

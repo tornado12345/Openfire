@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 1761 $
- * $Date: 2005-08-09 19:34:09 -0300 (Tue, 09 Aug 2005) $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,7 +58,7 @@ import java.util.List;
 public class IQOfflineMessagesHandler extends IQHandler implements ServerFeaturesProvider,
         DiscoInfoProvider, DiscoItemsProvider {
 
-	private static final Logger Log = LoggerFactory.getLogger(IQOfflineMessagesHandler.class);
+    private static final Logger Log = LoggerFactory.getLogger(IQOfflineMessagesHandler.class);
 
     private static final String NAMESPACE = "http://jabber.org/protocol/offline";
 
@@ -81,7 +77,7 @@ public class IQOfflineMessagesHandler extends IQHandler implements ServerFeature
     }
 
     @Override
-	public IQ handleIQ(IQ packet) throws UnauthorizedException {
+    public IQ handleIQ(IQ packet) throws UnauthorizedException {
         IQ reply = IQ.createResultIQ(packet);
         Element offlineRequest = packet.getChildElement();
 
@@ -136,7 +132,7 @@ public class IQOfflineMessagesHandler extends IQHandler implements ServerFeature
     }
 
     @Override
-	public IQHandlerInfo getInfo() {
+    public IQHandlerInfo getInfo() {
         return info;
     }
 
@@ -196,7 +192,7 @@ public class IQOfflineMessagesHandler extends IQHandler implements ServerFeature
     }
 
     @Override
-	public void initialize(XMPPServer server) {
+    public void initialize(XMPPServer server) {
         super.initialize(server);
         infoHandler = server.getIQDiscoInfoHandler();
         itemsHandler = server.getIQDiscoItemsHandler();
@@ -206,14 +202,14 @@ public class IQOfflineMessagesHandler extends IQHandler implements ServerFeature
     }
 
     @Override
-	public void start() throws IllegalStateException {
+    public void start() throws IllegalStateException {
         super.start();
         infoHandler.setServerNodeInfoProvider(NAMESPACE, this);
         itemsHandler.setServerNodeInfoProvider(NAMESPACE, this);
     }
 
     @Override
-	public void stop() {
+    public void stop() {
         super.stop();
         infoHandler.removeServerNodeInfoProvider(NAMESPACE);
         itemsHandler.removeServerNodeInfoProvider(NAMESPACE);

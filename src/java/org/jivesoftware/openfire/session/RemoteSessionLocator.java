@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -91,5 +87,5 @@ public interface RemoteSessionLocator {
      * @param address the address that uniquely identifies the session.
      * @return a session surrogate of an incoming server session hosted by a remote cluster node.
      */
-    OutgoingServerSession getOutgoingServerSession(byte[] nodeID, JID address);
+    OutgoingServerSession getOutgoingServerSession(byte[] nodeID, DomainPair address);
 }

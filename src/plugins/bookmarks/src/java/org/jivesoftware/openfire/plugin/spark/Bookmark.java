@@ -1,7 +1,4 @@
-/**
- * $Revision: 3034 $
- * $Date: 2005-11-04 21:02:33 -0300 (Fri, 04 Nov 2005) $
- *
+/*
  * Copyright (C) 2006-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,7 +61,7 @@ import org.slf4j.LoggerFactory;
 @JiveID(55)
 public class Bookmark {
 
-	private static final Logger Log = LoggerFactory.getLogger(Bookmark.class);
+    private static final Logger Log = LoggerFactory.getLogger(Bookmark.class);
 
     private static final String INSERT_BOOKMARK =
             "INSERT INTO ofBookmark(bookmarkID, bookmarkType, bookmarkName, bookmarkValue, " +
@@ -73,8 +70,8 @@ public class Bookmark {
             "INSERT INTO ofBookmarkPerm(bookmarkID, bookmarkType, name) VALUES(?,?,?)";
     private static final String LOAD_BOOKMARK_PERMISSIONS =
             "SELECT bookmarkType, name FROM ofBookmarkPerm WHERE bookmarkID=?";
-	//    private static final String SAVE_BOOKMARK_PERMISSIONS =
-	//            "UPDATE ofBookmarkPerm SET bookmarkType=?, name=? WHERE bookmarkID=?";
+    //    private static final String SAVE_BOOKMARK_PERMISSIONS =
+    //            "UPDATE ofBookmarkPerm SET bookmarkType=?, name=? WHERE bookmarkID=?";
     private static final String DELETE_BOOKMARK_PERMISSIONS =
             "DELETE from ofBookmarkPerm WHERE bookmarkID=?";
     private static final String SAVE_BOOKMARK =

@@ -1,7 +1,4 @@
-/**
- * $Revision$
- * $Date$
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +43,7 @@ import org.slf4j.LoggerFactory;
  */
 public class JNDIDataSourceProvider implements ConnectionProvider {
 
-	private static final Logger Log = LoggerFactory.getLogger(JNDIDataSourceProvider.class);
+    private static final Logger Log = LoggerFactory.getLogger(JNDIDataSourceProvider.class);
 
     private String dataSourceName;
     private DataSource dataSource;

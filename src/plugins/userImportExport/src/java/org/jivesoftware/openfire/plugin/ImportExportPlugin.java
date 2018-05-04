@@ -1,5 +1,4 @@
-/**
- *
+/*
  * Copyright 2016 Ryan Graham
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,9 +44,9 @@ import org.slf4j.LoggerFactory;
  * @author <a href="mailto:ryan@version2software.com">Ryan Graham</a>
  */
 public class ImportExportPlugin implements Plugin {
-	
-	private static final Logger Log = LoggerFactory.getLogger(ImportExportPlugin.class);
-	
+    
+    private static final Logger Log = LoggerFactory.getLogger(ImportExportPlugin.class);
+    
     private UserProvider provider;
     
     public ImportExportPlugin() {

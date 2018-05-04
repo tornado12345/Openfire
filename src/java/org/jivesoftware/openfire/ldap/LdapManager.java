@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 2698 $
- * $Date: 2005-08-19 15:28:16 -0300 (Fri, 19 Aug 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,19 +16,17 @@
 
 package org.jivesoftware.openfire.ldap;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.text.MessageFormat;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Hashtable;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.StringTokenizer;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import com.sun.jndi.ldap.LdapCtxFactory;
+import org.jivesoftware.openfire.group.GroupNotFoundException;
+import org.jivesoftware.openfire.user.UserNotFoundException;
+import org.jivesoftware.util.JiveGlobals;
+import org.jivesoftware.util.JiveInitialLdapContext;
+import org.jivesoftware.util.cache.Cache;
+import org.jivesoftware.util.cache.CacheFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.xmpp.packet.JID;
+
 import javax.naming.Context;
 import javax.naming.NamingEnumeration;
 import javax.naming.NamingException;
@@ -48,14 +42,20 @@ import javax.naming.ldap.SortControl;
 import javax.naming.ldap.StartTlsRequest;
 import javax.naming.ldap.StartTlsResponse;
 import javax.net.ssl.SSLSession;
-
-import org.jivesoftware.openfire.group.GroupNotFoundException;
-import org.jivesoftware.openfire.user.UserNotFoundException;
-import org.jivesoftware.util.JiveGlobals;
-import org.jivesoftware.util.JiveInitialLdapContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.xmpp.packet.JID;
+import java.io.Serializable;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Hashtable;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.StringTokenizer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Centralized administration of LDAP connections. The {@link #getInstance()} method
@@ -97,6 +97,11 @@ import org.xmpp.packet.JID;
 public class LdapManager {
 
     private static final Logger Log = LoggerFactory.getLogger(LdapManager.class);
+    // Determine the name of the default LDAP context factory.
+    // NOTE: Extracting the name from the class rather than hard coding it allows the compiler to detect the use of this
+    // internal class and emit an appropriate warning ("warning: LdapCtxFactory is internal proprietary API and may be removed in a future release")
+    // This is deliberate, to highlight use of classes that may be removed in the future.
+    private static final String DEFAULT_LDAP_CONTEXT_FACTORY = LdapCtxFactory.class.getName();
 
     private static LdapManager instance;
     static {
@@ -205,6 +210,8 @@ public class LdapManager {
 
     private final Map<String, String> properties;
 
+    private Cache<String, DNCacheEntry> userDNCache = null;
+
     /**
      * Provides singleton access to an instance of the LdapManager class.
      *
@@ -257,6 +264,12 @@ public class LdapManager {
         JiveGlobals.migrateProperty("ldap.pagedResultsSize");
         JiveGlobals.migrateProperty("ldap.clientSideSorting");
         JiveGlobals.migrateProperty("ldap.ldapDebugEnabled");
+        JiveGlobals.migrateProperty("ldap.encodeMultibyteCharacters");
+
+        if (JiveGlobals.getBooleanProperty("ldap.userDNCache.enabled", true)) {
+            String cacheName = "LDAP UserDN";
+            userDNCache = CacheFactory.createCache( cacheName );
+        }
 
         String host = properties.get("ldap.host");
         if (host != null) {
@@ -416,12 +429,12 @@ public class LdapManager {
             catch (ClassNotFoundException cnfe) {
                 Log.error("Initial context factory class failed to load: " + initialContextFactory +
                         ".  Using default initial context factory class instead.");
-                initialContextFactory = "com.sun.jndi.ldap.LdapCtxFactory";
+                initialContextFactory = DEFAULT_LDAP_CONTEXT_FACTORY;
             }
         }
         // Use default value if none was set.
         else {
-            initialContextFactory = "com.sun.jndi.ldap.LdapCtxFactory";
+            initialContextFactory = DEFAULT_LDAP_CONTEXT_FACTORY;
         }
 
         StringBuilder buf = new StringBuilder();
@@ -923,15 +936,41 @@ public class LdapManager {
      * @return the dn associated with <tt>username</tt>.
      * @throws Exception if the search for the dn fails.
      */
-    public String findUserDN(String username) throws Exception {
-        try {
-            return findUserDN(username, baseDN);
-        }
-        catch (Exception e) {
-            if (alternateBaseDN != null) {
-                return findUserDN(username, alternateBaseDN);
+    public String findUserDN( String username ) throws Exception
+    {
+        if ( userDNCache != null )
+        {
+            // Return a cache entry if one exists.
+            final DNCacheEntry dnCacheEntry = userDNCache.get( username );
+            if ( dnCacheEntry != null )
+            {
+                return dnCacheEntry.getUserDN();
             }
-            else {
+        }
+
+        // No cache entry. Query for the value, and add that to the cache.
+        try
+        {
+            final String userDN = findUserDN( username, baseDN );
+            if ( userDNCache != null )
+            {
+                userDNCache.put( username, new DNCacheEntry( userDN, baseDN ) );
+            }
+            return userDN;
+        }
+        catch ( Exception e )
+        {
+            if ( alternateBaseDN != null )
+            {
+                final String userDN = findUserDN( username, alternateBaseDN );
+                if ( userDNCache != null )
+                {
+                    userDNCache.put( username, new DNCacheEntry( userDN, alternateBaseDN ) );
+                }
+                return userDN;
+            }
+            else
+            {
                 throw e;
             }
         }
@@ -990,7 +1029,7 @@ public class LdapManager {
 
             // NOTE: this assumes that the username has already been JID-unescaped
             NamingEnumeration<SearchResult> answer = ctx.search("", getSearchFilter(), 
-            		new String[] {sanitizeSearchFilter(username)},
+                    new String[] {sanitizeSearchFilter(username)},
                     constraints);
 
             if (debug) {
@@ -1031,11 +1070,11 @@ public class LdapManager {
                 userDN = getEnclosedDN(userDN);
             }
             return userDN;
-        }
-        catch (Exception e) {
-            if (debug) {
-                Log.debug("LdapManager: Exception thrown when searching for userDN based on username '" + username + "'", e);
-            }
+        } catch (final UserNotFoundException e) {
+            Log.trace("LdapManager: UserNotFoundException thrown", e);
+            throw e;
+        } catch (final Exception e) {
+            Log.debug("LdapManager: Exception thrown when searching for userDN based on username '" + username + "'", e);
             throw e;
         }
         finally {
@@ -1175,11 +1214,11 @@ public class LdapManager {
                 groupDN = getEnclosedDN(groupDN);
             }
             return groupDN;
-        }
-        catch (Exception e) {
-            if (debug) {
-                Log.debug("LdapManager: Exception thrown when searching for groupDN based on groupname '" + groupname + "'", e);
-            }
+        } catch (final GroupNotFoundException e) {
+            Log.trace("LdapManager: GroupNotFoundException thrown", e);
+            throw e;
+        } catch (final Exception e) {
+            Log.debug("LdapManager: Exception thrown when searching for groupDN based on groupname '" + groupname + "'", e);
             throw e;
         }
         finally {
@@ -1505,22 +1544,48 @@ public class LdapManager {
      * @return the BaseDN for the given username. If no baseDN is found,
      *         this method will return <tt>null</tt>.
      */
-    public String getUsersBaseDN(String username) {
-        try {
-            findUserDN(username, baseDN);
+    public String getUsersBaseDN( String username )
+    {
+        if ( userDNCache != null )
+        {
+            // Return a cache entry if one exists.
+            final DNCacheEntry dnCacheEntry = userDNCache.get( username );
+            if ( dnCacheEntry != null )
+            {
+                return dnCacheEntry.getBaseDN();
+            }
+        }
+
+        // No cache entry. Query for the value, and add that to the cache.
+        try
+        {
+            final String userDN = findUserDN( username, baseDN );
+            if ( userDNCache != null )
+            {
+                userDNCache.put( username, new DNCacheEntry( userDN, baseDN ) );
+            }
             return baseDN;
         }
-        catch (Exception e) {
-            try {
-                if (alternateBaseDN != null) {
-                    findUserDN(username, alternateBaseDN);
+        catch ( Exception e )
+        {
+            try
+            {
+                if ( alternateBaseDN != null )
+                {
+                    final String userDN = findUserDN( username, alternateBaseDN );
+                    if ( userDNCache != null )
+                    {
+                        userDNCache.put( username, new DNCacheEntry( userDN, alternateBaseDN ) );
+                    }
                     return alternateBaseDN;
                 }
             }
-            catch (Exception ex) {
-                Log.debug(ex.getMessage(), ex);
+            catch ( Exception ex )
+            {
+                Log.debug( ex.getMessage(), ex );
             }
         }
+
         return null;
     }
 
@@ -1858,7 +1923,7 @@ public class LdapManager {
      * @return A simple list of strings (that should be sorted) of the results.
      */
     public List<String> retrieveList(String attribute, String searchFilter, int startIndex, int numResults, String suffixToTrim) {
-    	return retrieveList(attribute, searchFilter, startIndex, numResults, suffixToTrim, false);
+        return retrieveList(attribute, searchFilter, startIndex, numResults, suffixToTrim, false);
     }
 
     /**
@@ -2234,6 +2299,21 @@ public class LdapManager {
      *         search filter string.
      */
     public static String sanitizeSearchFilter(final String value) {
+      return sanitizeSearchFilter(value, false);
+      
+    }
+      
+    /**
+     * Escapes any special chars (RFC 4515) from a string representing
+     * a search filter assertion value, with the exception of the '*' wildcard sign
+     *
+     * @param value The input string.
+     *
+     * @return A assertion value string ready for insertion into a 
+     *         search filter string.
+     */
+    public static String sanitizeSearchFilter(final String value, boolean acceptWildcard ) {
+
 
             StringBuilder result = new StringBuilder();
 
@@ -2242,26 +2322,34 @@ public class LdapManager {
                 char c = value.charAt(i);
 
                 switch(c) {
-	            	case '!':		result.append("\\21");	break;
-	            	case '&':		result.append("\\26");	break;
-	            	case '(':		result.append("\\28");	break;
-	            	case ')':		result.append("\\29");	break;
-	            	case '*':		result.append("\\2a");	break;
-	            	case ':':		result.append("\\3a");	break;
-	            	case '\\':		result.append("\\5c");	break;
-	            	case '|':		result.append("\\7c");	break;
-	            	case '~':		result.append("\\7e");	break;
-	            	case '\u0000':	result.append("\\00");	break;
-            	default:
-            		if (c <= 0x7f) {
+                    case '!':		result.append("\\21");	break;
+                    case '&':		result.append("\\26");	break;
+                    case '(':		result.append("\\28");	break;
+                    case ')':		result.append("\\29");	break;
+                    case '*':		result.append(acceptWildcard ? "*" : "\\2a");	break;
+                    case ':':		result.append("\\3a");	break;
+                    case '\\':		result.append("\\5c");	break;
+                    case '|':		result.append("\\7c");	break;
+                    case '~':		result.append("\\7e");	break;
+                    case '\u0000':	result.append("\\00");	break;
+                default:
+                    if (c <= 0x7f) {
                         // regular 1-byte UTF-8 char
-            			result.append(String.valueOf(c));
+                        result.append(String.valueOf(c));
                     }
-                    else if (c >= 0x080) { 
+                    else if (c >= 0x080) {
                         // higher-order 2, 3 and 4-byte UTF-8 chars
-                        byte[] utf8bytes = String.valueOf(c).getBytes(StandardCharsets.UTF_8);
-                        for (byte b : utf8bytes) {
-                            result.append(String.format("\\%02x", b));
+                        if ( JiveGlobals.getBooleanProperty( "ldap.encodeMultibyteCharacters", false ) )
+                        {
+                            byte[] utf8bytes = String.valueOf( c ).getBytes( StandardCharsets.UTF_8 );
+                            for ( byte b : utf8bytes )
+                            {
+                                result.append( String.format( "\\%02x", b ) );
+                            }
+                        }
+                        else
+                        {
+                            result.append(String.valueOf(c));
                         }
                     }
                 }
@@ -2295,4 +2383,54 @@ public class LdapManager {
     // Set the pattern to use to wrap DN values with "
     private static Pattern dnPattern;
 
+    private static class DNCacheEntry implements Serializable
+    {
+        private final String userDN;
+        private final String baseDN;
+
+        public DNCacheEntry( String userDN, String baseDN )
+        {
+            this.userDN = userDN;
+            this.baseDN = baseDN;
+        }
+
+        public String getUserDN()
+        {
+            return userDN;
+        }
+
+        public String getBaseDN()
+        {
+            return baseDN;
+        }
+
+        @Override
+        public boolean equals( Object o )
+        {
+            if ( this == o )
+            {
+                return true;
+            }
+            if ( o == null || getClass() != o.getClass() )
+            {
+                return false;
+            }
+
+            DNCacheEntry that = (DNCacheEntry) o;
+
+            if ( userDN != null ? !userDN.equals( that.userDN ) : that.userDN != null )
+            {
+                return false;
+            }
+            return baseDN != null ? baseDN.equals( that.baseDN ) : that.baseDN == null;
+        }
+
+        @Override
+        public int hashCode()
+        {
+            int result = userDN != null ? userDN.hashCode() : 0;
+            result = 31 * result + ( baseDN != null ? baseDN.hashCode() : 0 );
+            return result;
+        }
+    }
 }

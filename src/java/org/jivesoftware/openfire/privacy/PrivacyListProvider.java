@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,7 +43,7 @@ public class PrivacyListProvider {
 
     private static final PrivacyListProvider instance = new PrivacyListProvider();
     
-	private static final Logger Log = LoggerFactory.getLogger(PrivacyListProvider.class);
+    private static final Logger Log = LoggerFactory.getLogger(PrivacyListProvider.class);
 
     private static final String PRIVACY_LIST_COUNT =
             "SELECT count(*) from ofPrivacyList";

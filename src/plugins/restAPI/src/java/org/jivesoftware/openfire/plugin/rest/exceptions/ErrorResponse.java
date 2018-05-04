@@ -1,5 +1,6 @@
 package org.jivesoftware.openfire.plugin.rest.exceptions;
 
+import javax.xml.bind.annotation.XmlElement;
 import javax.xml.bind.annotation.XmlRootElement;
 
 /**
@@ -8,8 +9,8 @@ import javax.xml.bind.annotation.XmlRootElement;
 @XmlRootElement(name = "error")
 public class ErrorResponse {
 
-	/** The ressource. */
-	private String ressource;
+	/** The resource. */
+	private String resource;
 
 	/** The message. */
 	private String message;
@@ -21,22 +22,22 @@ public class ErrorResponse {
 	private String exceptionStack;
 
 	/**
-	 * Gets the ressource.
+	 * Gets the resource.
 	 *
-	 * @return the ressource
+	 * @return the resource
 	 */
-	public String getRessource() {
-		return ressource;
+	@XmlElement(name = "resource")
+	public String getResource() {
+		return resource;
 	}
 
 	/**
-	 * Sets the ressource.
+	 * Sets the resource.
 	 *
-	 * @param ressource
-	 *            the new ressource
+	 * @param ressource the new resource
 	 */
-	public void setRessource(String ressource) {
-		this.ressource = ressource;
+	public void setResource(String resource) {
+		this.resource = resource;
 	}
 
 	/**
@@ -44,6 +45,7 @@ public class ErrorResponse {
 	 *
 	 * @return the message
 	 */
+	@XmlElement(name = "message")
 	public String getMessage() {
 		return message;
 	}
@@ -51,8 +53,7 @@ public class ErrorResponse {
 	/**
 	 * Sets the message.
 	 *
-	 * @param message
-	 *            the new message
+	 * @param message the new message
 	 */
 	public void setMessage(String message) {
 		this.message = message;
@@ -63,6 +64,7 @@ public class ErrorResponse {
 	 *
 	 * @return the exception
 	 */
+	@XmlElement(name = "exception")
 	public String getException() {
 		return exception;
 	}
@@ -70,8 +72,7 @@ public class ErrorResponse {
 	/**
 	 * Sets the exception.
 	 *
-	 * @param exception
-	 *            the new exception
+	 * @param exception the new exception
 	 */
 	public void setException(String exception) {
 		this.exception = exception;
@@ -82,6 +83,7 @@ public class ErrorResponse {
 	 *
 	 * @return the exception stack
 	 */
+	@XmlElement(name = "exceptionStack")
 	public String getExceptionStack() {
 		return exceptionStack;
 	}
@@ -89,8 +91,7 @@ public class ErrorResponse {
 	/**
 	 * Sets the exception stack.
 	 *
-	 * @param exceptionStack
-	 *            the new exception stack
+	 * @param exceptionStack the new exception stack
 	 */
 	public void setExceptionStack(String exceptionStack) {
 		this.exceptionStack = exceptionStack;

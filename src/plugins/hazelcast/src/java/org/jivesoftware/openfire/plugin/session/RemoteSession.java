@@ -1,7 +1,4 @@
-/**
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2007-2009 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -186,17 +183,17 @@ public abstract class RemoteSession implements Session {
      * @return result of remote operation.
      */
     protected Object doSynchronousClusterTask(ClusterTask task) {
-    	ClusterNodeInfo info = CacheFactory.getClusterNodeInfo(nodeID);
-    	Object result = null;
-    	if (info == null && task instanceof RemoteSessionTask) { // clean up invalid session
-    		Session remoteSession = ((RemoteSessionTask)task).getSession();
-    		if (remoteSession instanceof ClientSession) {
-            	SessionManager.getInstance().removeSession(null, remoteSession.getAddress(), false, false);
-    		}
-    	} else {
-        	result = (info == null) ? null : CacheFactory.doSynchronousClusterTask(task, nodeID);
+        ClusterNodeInfo info = CacheFactory.getClusterNodeInfo(nodeID);
+        Object result = null;
+        if (info == null && task instanceof RemoteSessionTask) { // clean up invalid session
+            Session remoteSession = ((RemoteSessionTask)task).getSession();
+            if (remoteSession instanceof ClientSession) {
+                SessionManager.getInstance().removeSession(null, remoteSession.getAddress(), false, false);
+            }
+        } else {
+            result = (info == null) ? null : CacheFactory.doSynchronousClusterTask(task, nodeID);
         }
-    	return result;
+        return result;
     }
 
     /**
@@ -205,15 +202,15 @@ public abstract class RemoteSession implements Session {
      * @param task the task to be invoked on the specified cluster member.
      */
     protected void doClusterTask(ClusterTask task) {
-    	ClusterNodeInfo info = CacheFactory.getClusterNodeInfo(nodeID);
-    	if (info == null && task instanceof RemoteSessionTask) { // clean up invalid session
-    		Session remoteSession = ((RemoteSessionTask)task).getSession();
-    		if (remoteSession instanceof ClientSession) {
-            	SessionManager.getInstance().removeSession(null, remoteSession.getAddress(), false, false);
-    		}
-		} else {
-			CacheFactory.doClusterTask(task, nodeID);
-	    }
+        ClusterNodeInfo info = CacheFactory.getClusterNodeInfo(nodeID);
+        if (info == null && task instanceof RemoteSessionTask) { // clean up invalid session
+            Session remoteSession = ((RemoteSessionTask)task).getSession();
+            if (remoteSession instanceof ClientSession) {
+                SessionManager.getInstance().removeSession(null, remoteSession.getAddress(), false, false);
+            }
+        } else {
+            CacheFactory.doClusterTask(task, nodeID);
+        }
     }
 
     @Override

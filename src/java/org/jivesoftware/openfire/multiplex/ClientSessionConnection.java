@@ -1,8 +1,4 @@
-/**
- * $RCSfile: $
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -175,7 +171,7 @@ public class ClientSessionConnection extends VirtualConnection {
      * to be terminated.
      */
     @Override
-	public void closeVirtualConnection() {
+    public void closeVirtualConnection() {
         // Figure out who requested the connection to be closed
         StreamID streamID = session.getStreamID();
         if (multiplexerManager.getClientSession(connectionManagerName, streamID) == null) {

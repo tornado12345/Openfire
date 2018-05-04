@@ -1,7 +1,4 @@
-/**
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,7 +51,7 @@ public class GetConversationTask implements ClusterTask<Conversation> {
 
     public void run() {
         MonitoringPlugin plugin = (MonitoringPlugin) XMPPServer.getInstance().getPluginManager().getPlugin(
-        		MonitoringConstants.NAME);
+                MonitoringConstants.NAME);
         ConversationManager conversationManager = (ConversationManager)plugin.getModule(ConversationManager.class);
         try {
             conversation = conversationManager.getConversation(conversationID);

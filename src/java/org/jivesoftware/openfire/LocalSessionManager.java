@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,8 +57,8 @@ import org.slf4j.LoggerFactory;
  * @author Gaston Dombiak
  */
 class LocalSessionManager {
-	
-	private static final Logger Log = LoggerFactory.getLogger(LocalSessionManager.class);
+    
+    private static final Logger Log = LoggerFactory.getLogger(LocalSessionManager.class);
 
     /**
      * Map that holds sessions that has been created but haven't been authenticated yet. The Map
@@ -147,7 +143,9 @@ class LocalSessionManager {
             for (LocalSession session : sessions) {
                 try {
                     // Notify connected client that the server is being shut down
-                    session.getConnection().systemShutdown();
+                    if (!session.isDetached()) {
+                        session.getConnection().systemShutdown();
+                    }
                 }
                 catch (Throwable t) {
                     // Ignore.
@@ -167,7 +165,7 @@ class LocalSessionManager {
          * Close incoming server sessions that have been idle for a long time.
          */
         @Override
-		public void run() {
+        public void run() {
             // Do nothing if this feature is disabled
             int idleTime = SessionManager.getInstance().getServerSessionIdleTime();
             if (idleTime == -1) {
@@ -177,6 +175,7 @@ class LocalSessionManager {
             for (LocalIncomingServerSession session : incomingServerSessions.values()) {
                 try {
                     if (session.getLastActiveDate().getTime() < deadline) {
+                        Log.debug( "ServerCleanupTask is closing an incoming server session that has been idle for a long time. Last active: {}. Session to be closed: {}", session.getLastActiveDate(), session );
                         session.close();
                     }
                 }

@@ -1,7 +1,4 @@
-/**
- * $Revision$
- * $Date$
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,7 +37,7 @@ import org.xmpp.packet.JID;
  */
 public class DefaultAdminProvider implements AdminProvider {
 
-	private static final Logger Log = LoggerFactory.getLogger(DefaultAdminProvider.class);
+    private static final Logger Log = LoggerFactory.getLogger(DefaultAdminProvider.class);
 
     /**
      * Constructs a new DefaultAdminProvider

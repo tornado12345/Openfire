@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software and Artur Hefczyc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +42,7 @@ import org.slf4j.LoggerFactory;
  */
 public class TLSWrapper {
 
-	private static final Logger Log = LoggerFactory.getLogger(TLSWrapper.class);
+    private static final Logger Log = LoggerFactory.getLogger(TLSWrapper.class);
 
     /*
      * Enables logging of the SSLEngine operations.

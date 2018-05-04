@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 3055 $
- * $Date: 2005-11-10 21:57:51 -0300 (Thu, 10 Nov 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,7 +53,7 @@ import org.xmpp.packet.JID;
  */
 public class LdapUserProvider implements UserProvider {
 
-	private static final Logger Log = LoggerFactory.getLogger(LdapUserProvider.class);
+    private static final Logger Log = LoggerFactory.getLogger(LdapUserProvider.class);
 
     // LDAP date format parser.
     private static SimpleDateFormat ldapDateFormat = new SimpleDateFormat("yyyyMMddHHmmss");
@@ -140,32 +136,32 @@ public class LdapUserProvider implements UserProvider {
             Attribute authPassword = attrs.get("authPassword");
             User user = new User(username, name, email, creationDate, modificationDate);
             if (authPassword != null) {
-            	// The authPassword attribute can be multivalued.
-            	// Not sure if this is the right API to loop through them.
-            	NamingEnumeration values = authPassword.getAll();
-            	while (values.hasMore()) {
-            		Attribute authPasswordValue = (Attribute) values.next();
-	        		String[] parts = ((String) authPasswordValue.get()).split("$");
-	        		String[] authInfo = parts[1].split(":");
-	        		String[] authValue = parts[2].split(":");
-	
-	        		String scheme = parts[0].trim();
-	
-	            	// We only support SCRAM-SHA-1 at the moment.
-	        		if ("SCRAM-SHA-1".equals(scheme)) {
-	            		int iterations = Integer.valueOf(authInfo[0].trim());
-	            		String salt = authInfo[1].trim();
-	            		String storedKey = authValue[0].trim();
-	            		String serverKey = authValue[1].trim();
-	            		
-	            		user.setSalt(salt);
-	            		user.setStoredKey(storedKey);
-	            		user.setServerKey(serverKey);
-	            		user.setIterations(iterations);
-	            		
-	            		break;
-	        		}
-            	}
+                // The authPassword attribute can be multivalued.
+                // Not sure if this is the right API to loop through them.
+                NamingEnumeration values = authPassword.getAll();
+                while (values.hasMore()) {
+                    Attribute authPasswordValue = (Attribute) values.next();
+                    String[] parts = ((String) authPasswordValue.get()).split("$");
+                    String[] authInfo = parts[1].split(":");
+                    String[] authValue = parts[2].split(":");
+    
+                    String scheme = parts[0].trim();
+    
+                    // We only support SCRAM-SHA-1 at the moment.
+                    if ("SCRAM-SHA-1".equals(scheme)) {
+                        int iterations = Integer.valueOf(authInfo[0].trim());
+                        String salt = authInfo[1].trim();
+                        String storedKey = authValue[0].trim();
+                        String serverKey = authValue[1].trim();
+                        
+                        user.setSalt(salt);
+                        user.setStoredKey(storedKey);
+                        user.setServerKey(serverKey);
+                        user.setIterations(iterations);
+                        
+                        break;
+                    }
+                }
             }
             return user;
         }
@@ -301,6 +297,15 @@ public class LdapUserProvider implements UserProvider {
         if (fields.isEmpty() || query == null || "".equals(query)) {
             return Collections.emptyList();
         }
+        
+        query = LdapManager.sanitizeSearchFilter(query, true);
+        
+        // Make the query be a wildcard search by default. So, if the user searches for
+        // "John", make the search be "John*" instead.
+        if (!query.endsWith("*")) {
+            query = query + "*";
+        }
+
         if (!searchFields.keySet().containsAll(fields)) {
             throw new IllegalArgumentException("Search fields " + fields + " are not valid.");
         }
@@ -315,10 +320,8 @@ public class LdapUserProvider implements UserProvider {
         }
         for (String field:fields) {
             String attribute = searchFields.get(field);
-            // Make the query be a wildcard search by default. So, if the user searches for
-            // "John", make the sanitized search be "John*" instead.
             filter.append('(').append(attribute).append('=')
-            	.append(LdapManager.sanitizeSearchFilter(query)).append("*)");
+                .append( query ).append(")");
         }
         if (fields.size() > 1) {
             filter.append(')');

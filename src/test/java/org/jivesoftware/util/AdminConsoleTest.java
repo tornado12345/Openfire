@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision$
- * $Date$
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  */
 
@@ -26,7 +22,7 @@ public class AdminConsoleTest {
      * Resets the admin console internal data structures.
      */
     @After
-	public void tearDown() throws Exception {
+    public void tearDown() throws Exception {
         Class c = AdminConsole.class;
         Method init = c.getDeclaredMethod("load", (Class[])null);
         init.setAccessible(true);

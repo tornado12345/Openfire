@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 3187 $
- * $Date: 2005-12-11 13:34:34 -0300 (Sun, 11 Dec 2005) $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,7 +62,7 @@ import com.jcraft.jzlib.ZOutputStream;
  */
 public class SocketConnection implements Connection {
 
-	private static final Logger Log = LoggerFactory.getLogger(SocketConnection.class);
+    private static final Logger Log = LoggerFactory.getLogger(SocketConnection.class);
 
     private static Map<SocketConnection, String> instances =
             new ConcurrentHashMap<>();
@@ -154,6 +150,9 @@ public class SocketConnection implements Connection {
         xmlSerializer = new XMLSocketWriter(writer, this);
 
         instances.put(this, "");
+
+        // Default this sensibly.
+        this.tlsPolicy = this.getConfiguration().getTlsPolicy();
     }
 
     /**
@@ -273,6 +272,11 @@ public class SocketConnection implements Connection {
     }
 
     @Override
+    public void reinit(LocalSession owner) {
+        session = owner;
+    }
+
+    @Override
     public void registerCloseListener(ConnectionCloseListener listener, Object handbackMessage) {
         if (isClosed()) {
             listener.onConnectionClose(handbackMessage);
@@ -332,7 +336,7 @@ public class SocketConnection implements Connection {
 
     @Override
     public boolean isClosed() {
-    	return state.get() == State.CLOSED;
+        return state.get() == State.CLOSED;
     }
 
     @Override
@@ -495,40 +499,40 @@ public class SocketConnection implements Connection {
      * the connection and its session.
      */
     private void close(boolean force) {
-    	if (state.compareAndSet(State.OPEN, State.CLOSED)) {
-    		
+        if (state.compareAndSet(State.OPEN, State.CLOSED)) {
+            
             if (session != null) {
                 session.setStatus(Session.STATUS_CLOSED);
             }
 
             if (!force) {
-	            boolean allowedToWrite = false;
-	            try {
-	                requestWriting();
-	                allowedToWrite = true;
-	                // Register that we started sending data on the connection
-	                writeStarted();
-	                writer.write("</stream:stream>");
-	                if (flashClient) {
-	                    writer.write('\0');
-	                }
-	                writer.flush();
-	            }
-	            catch (Exception e) {
-	                Log.debug("Failed to deliver stream close tag: " + e.getMessage());
-	            }
-	            
-	            // Register that we finished sending data on the connection
-	            writeFinished();
-	            if (allowedToWrite) {
-	                releaseWriting();
-	            }
+                boolean allowedToWrite = false;
+                try {
+                    requestWriting();
+                    allowedToWrite = true;
+                    // Register that we started sending data on the connection
+                    writeStarted();
+                    writer.write("</stream:stream>");
+                    if (flashClient) {
+                        writer.write('\0');
+                    }
+                    writer.flush();
+                }
+                catch (Exception e) {
+                    Log.debug("Failed to deliver stream close tag: " + e.getMessage());
+                }
+                
+                // Register that we finished sending data on the connection
+                writeFinished();
+                if (allowedToWrite) {
+                    releaseWriting();
+                }
             }
                 
             closeConnection();
             notifyCloseListeners();
             
-    	}
+        }
     }
 
     @Override
@@ -720,7 +724,7 @@ public class SocketConnection implements Connection {
     }
 
     @Override
-	public String toString() {
+    public String toString() {
         return super.toString() + " socket: " + socket + " session: " + session;
     }
 

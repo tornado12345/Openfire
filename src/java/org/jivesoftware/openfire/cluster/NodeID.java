@@ -1,8 +1,4 @@
-/**
- * $RCSfile: $
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,7 +77,7 @@ public class NodeID implements Externalizable {
     }
 
     @Override
-	public boolean equals(Object o) {
+    public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
 
@@ -91,13 +87,13 @@ public class NodeID implements Externalizable {
     }
 
     @Override
-	public int hashCode() {
+    public int hashCode() {
         return Arrays.hashCode(nodeID);
     }
     
     @Override
     public String toString() {
-    	return StringUtils.getString(nodeID);
+        return StringUtils.getString(nodeID);
     }
 
     public byte[] toByteArray() {

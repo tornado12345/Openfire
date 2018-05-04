@@ -1,7 +1,4 @@
-/**
- * $Revision$
- * $Date$
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +43,7 @@ import org.xmpp.packet.JID;
  */
 public class AdminManager {
 
-	private static final Logger Log = LoggerFactory.getLogger(AdminManager.class);
+    private static final Logger Log = LoggerFactory.getLogger(AdminManager.class);
 
     // Wrap this guy up so we can mock out the AdminManager class.
     private static class AdminManagerContainer {
@@ -328,11 +325,11 @@ public class AdminManager {
 
         List<JID> admins = new ArrayList<>();
         for (JID jid : jids)
-		{
+        {
             if (jid != null) {
-        	    admins.add(jid.asBareJID());
+                admins.add(jid.asBareJID());
             }
-		}
+        }
         adminList.addAll(admins);
         provider.setAdmins(admins);
     }

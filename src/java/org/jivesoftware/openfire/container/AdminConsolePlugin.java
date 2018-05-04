@@ -1,7 +1,4 @@
-/**
- * $Revision: 3034 $
- * $Date: 2005-11-04 21:02:33 -0300 (Fri, 04 Nov 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +44,7 @@ import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.webapp.WebAppContext;
 import org.jivesoftware.openfire.JMXManager;
 import org.jivesoftware.openfire.XMPPServer;
+import org.jivesoftware.openfire.keystore.CertificateStore;
 import org.jivesoftware.openfire.keystore.IdentityStore;
 import org.jivesoftware.openfire.spi.ConnectionConfiguration;
 import org.jivesoftware.openfire.spi.ConnectionManagerImpl;
@@ -115,16 +113,16 @@ public class AdminConsolePlugin implements Plugin {
         adminServer = new Server(tp);
 
         if (JMXManager.isEnabled()) {
-        	JMXManager jmx = JMXManager.getInstance();
-        	adminServer.addBean(jmx.getContainer());
+            JMXManager jmx = JMXManager.getInstance();
+            adminServer.addBean(jmx.getContainer());
         }
 
         // Create connector for http traffic if it's enabled.
         if (adminPort > 0) {
             final HttpConfiguration httpConfig = new HttpConfiguration();
 
-        	// Do not send Jetty info in HTTP headers
-			httpConfig.setSendServerVersion( false );
+            // Do not send Jetty info in HTTP headers
+            httpConfig.setSendServerVersion( false );
 
             final ServerConnector httpConnector = new ServerConnector(adminServer, null, null, null, -1, serverThreads, new HttpConnectionFactory(httpConfig));
 
@@ -138,7 +136,12 @@ public class AdminConsolePlugin implements Plugin {
         // Create a connector for https traffic if it's enabled.
         sslEnabled = false;
         try {
-            final IdentityStore identityStore = XMPPServer.getInstance().getCertificateStoreManager().getIdentityStore( ConnectionType.WEBADMIN );
+            IdentityStore identityStore = null;
+            if (XMPPServer.getInstance().getCertificateStoreManager() == null){
+                Log.warn( "Admin console: CertifcateStoreManager has not been initialized yet. HTTPS will be unavailable." );
+            } else {
+                identityStore = XMPPServer.getInstance().getCertificateStoreManager().getIdentityStore( ConnectionType.WEBADMIN );
+            }
             if (identityStore != null && adminSecurePort > 0 )
             {
                 if ( identityStore.getAllCertificates().isEmpty() )
@@ -212,7 +215,7 @@ public class AdminConsolePlugin implements Plugin {
         }
     }
 
-	/**
+    /**
      * Shuts down the Jetty server.
      * */
     public void shutdown() {
@@ -384,9 +387,9 @@ public class AdminConsolePlugin implements Plugin {
                 isSecureStarted = true;
             }
 
-           	if (connector instanceof HTTPSPDYServerConnector) {
-				isSPDY = true;
-			}
+            if (connector instanceof HTTPSPDYServerConnector) {
+                isSPDY = true;
+            }
         }
 
         if (isPlainStarted && isSecureStarted) {
@@ -411,25 +414,9 @@ public class AdminConsolePlugin implements Plugin {
     private class CertificateListener implements CertificateEventListener {
 
         @Override
-        public void certificateCreated(KeyStore keyStore, String alias, X509Certificate cert) {
-            // If new certificate is RSA then (re)start the HTTPS service
-            if ("RSA".equals(cert.getPublicKey().getAlgorithm())) {
-                restartNeeded = true;
-            }
-        }
-
-        @Override
-        public void certificateDeleted(KeyStore keyStore, String alias) {
+        public void storeContentChanged( CertificateStore store )
+        {
             restartNeeded = true;
-        }
-
-        @Override
-        public void certificateSigned(KeyStore keyStore, String alias,
-                                      List<X509Certificate> certificates) {
-            // If new certificate is RSA then (re)start the HTTPS service
-            if ("RSA".equals(certificates.get(0).getPublicKey().getAlgorithm())) {
-                restartNeeded = true;
-            }
         }
     }
 }

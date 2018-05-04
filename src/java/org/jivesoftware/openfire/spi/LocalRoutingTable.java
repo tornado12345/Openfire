@@ -1,8 +1,4 @@
-/**
- * $RCSfile: $
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,11 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.jivesoftware.openfire.RoutableChannelHandler;
 import org.jivesoftware.openfire.SessionManager;
-import org.jivesoftware.openfire.session.LocalClientSession;
-import org.jivesoftware.openfire.session.LocalOutgoingServerSession;
-import org.jivesoftware.openfire.session.LocalSession;
-import org.jivesoftware.openfire.session.OutgoingServerSession;
-import org.jivesoftware.openfire.session.Session;
+import org.jivesoftware.openfire.session.*;
 import org.jivesoftware.util.LocaleUtils;
 import org.jivesoftware.util.TaskEngine;
 import org.slf4j.Logger;
@@ -49,30 +41,33 @@ import org.xmpp.packet.JID;
  * @author Gaston Dombiak
  */
 class LocalRoutingTable {
-	
-	private static final Logger Log = LoggerFactory.getLogger(LocalRoutingTable.class);
+    
+    private static final Logger Log = LoggerFactory.getLogger(LocalRoutingTable.class);
 
-    Map<String, RoutableChannelHandler> routes = new ConcurrentHashMap<>();
+    Map<DomainPair, RoutableChannelHandler> routes = new ConcurrentHashMap<>();
 
     /**
      * Adds a route of a local {@link RoutableChannelHandler}
      *
-     * @param address the string representation of the JID associated to the route.
+     * @param pair DomainPair associated to the route.
      * @param route the route hosted by this node.
      * @return true if the element was added or false if was already present.
      */
-    boolean addRoute(String address, RoutableChannelHandler route) {
-        return routes.put(address, route) != route;
+    boolean addRoute(DomainPair pair, RoutableChannelHandler route) {
+        return routes.put(pair, route) != route;
     }
 
     /**
      * Returns the route hosted by this node that is associated to the specified address.
      *
-     * @param address the string representation of the JID associated to the route.
+     * @param pair DomainPair associated to the route.
      * @return the route hosted by this node that is associated to the specified address.
      */
-    RoutableChannelHandler getRoute(String address) {
-        return routes.get(address);
+    RoutableChannelHandler getRoute(DomainPair pair) {
+        return routes.get(pair);
+    }
+    RoutableChannelHandler getRoute(JID jid) {
+        return routes.get(new DomainPair("", jid.toString()));
     }
 
     /**
@@ -123,10 +118,10 @@ class LocalRoutingTable {
     /**
      * Removes a route of a local {@link RoutableChannelHandler}
      *
-     * @param address the string representation of the JID associated to the route.
+     * @param pair DomainPair associated to the route.
      */
-    void removeRoute(String address) {
-        routes.remove(address);
+    void removeRoute(DomainPair pair) {
+        routes.remove(pair);
     }
 
     public void start() {
@@ -143,7 +138,9 @@ class LocalRoutingTable {
                     LocalSession session = (LocalSession) route;
                     try {
                         // Notify connected client that the server is being shut down
-                        session.getConnection().systemShutdown();
+                        if (!session.isDetached()) {
+                            session.getConnection().systemShutdown();
+                        }
                     }
                     catch (Throwable t) {
                         // Ignore.
@@ -156,8 +153,11 @@ class LocalRoutingTable {
         }
     }
 
+    public boolean isLocalRoute(DomainPair pair) {
+        return routes.containsKey(pair);
+    }
     public boolean isLocalRoute(JID jid) {
-        return routes.containsKey(jid.toString());
+        return routes.containsKey(new DomainPair("", jid.toString()));
     }
 
     /**
@@ -168,7 +168,7 @@ class LocalRoutingTable {
          * Close outgoing server sessions that have been idle for a long time.
          */
         @Override
-		public void run() {
+        public void run() {
             // Do nothing if this feature is disabled
             int idleTime = SessionManager.getInstance().getServerSessionIdleTime();
             if (idleTime == -1) {
@@ -181,6 +181,7 @@ class LocalRoutingTable {
                     Session session = (Session) route;
                     try {
                         if (session.getLastActiveDate().getTime() < deadline) {
+                            Log.debug( "ServerCleanupTask is closing an outgoing server session that has been idle for a long time. Last active: {}. Session to be closed: {}", session.getLastActiveDate(), session );
                             session.close();
                         }
                     }

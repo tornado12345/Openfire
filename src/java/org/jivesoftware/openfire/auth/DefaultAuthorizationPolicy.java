@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: $
- * $Date: 2006-04-20 10:46:24 -0500 (Thu, 20 Apr 2006) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,7 +56,7 @@ import org.slf4j.LoggerFactory;
  */
 public class DefaultAuthorizationPolicy implements AuthorizationPolicy {
 
-	private static final Logger Log = LoggerFactory.getLogger(DefaultAuthorizationPolicy.class);
+    private static final Logger Log = LoggerFactory.getLogger(DefaultAuthorizationPolicy.class);
 
     private Vector<String> approvedRealms;
     private boolean proxyAuth;

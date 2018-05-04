@@ -1,8 +1,4 @@
-/**
- * $RCSfile: $
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +24,7 @@ import java.util.Date;
 import java.util.List;
 
 import org.dom4j.Element;
+import org.jivesoftware.util.JiveGlobals;
 import org.jivesoftware.util.LocaleUtils;
 import org.jivesoftware.util.XMPPDateTimeFormat;
 import org.slf4j.Logger;
@@ -38,6 +35,8 @@ import org.xmpp.packet.IQ;
 import org.xmpp.packet.JID;
 import org.xmpp.packet.Message;
 import org.xmpp.packet.Presence;
+
+import static org.jivesoftware.openfire.muc.spi.IQOwnerHandler.parseFirstValueAsBoolean;
 
 /**
  * A subscription to a node. Entities may subscribe to a node to be notified when new events
@@ -62,7 +61,7 @@ import org.xmpp.packet.Presence;
  */
 public class NodeSubscription {
 
-	private static final Logger Log = LoggerFactory.getLogger(NodeSubscription.class);
+    private static final Logger Log = LoggerFactory.getLogger(NodeSubscription.class);
 
     private static final XMPPDateTimeFormat xmppDateTime = new XMPPDateTimeFormat();
 
@@ -145,8 +144,8 @@ public class NodeSubscription {
      * @param state the state of the subscription with the node.
      * @param id the id the uniquely identifies this subscriptin within the node.
      */
-	public NodeSubscription(Node node, JID owner, JID jid, State state, String id)
-	{
+    public NodeSubscription(Node node, JID owner, JID jid, State state, String id)
+    {
         this.node = node;
         this.jid = jid;
         this.owner = owner;
@@ -390,7 +389,7 @@ public class NodeSubscription {
         configure(options);
         if (originalIQ != null) {
             // Return success response
-			node.getService().send(IQ.createResultIQ(originalIQ));
+            node.getService().send(IQ.createResultIQ(originalIQ));
         }
 
         if (wasUnconfigured) {
@@ -412,7 +411,6 @@ public class NodeSubscription {
 
     void configure(DataForm options) {
         List<String> values;
-        String booleanValue;
 
         boolean wasUsingPresence = !presenceStates.isEmpty();
 
@@ -438,14 +436,10 @@ public class NodeSubscription {
         for (FormField field : options.getFields()) {
             boolean fieldExists = true;
             if ("pubsub#deliver".equals(field.getVariable())) {
-                values = field.getValues();
-                booleanValue = (values.size() > 0 ? values.get(0) : "1");
-                deliverNotifications = "1".equals(booleanValue);
+                deliverNotifications = parseFirstValueAsBoolean( field, true ) ;
             }
             else if ("pubsub#digest".equals(field.getVariable())) {
-                values = field.getValues();
-                booleanValue = (values.size() > 0 ? values.get(0) : "1");
-                usingDigest = "1".equals(booleanValue);
+                usingDigest = parseFirstValueAsBoolean( field, true ) ;
             }
             else if ("pubsub#digest_frequency".equals(field.getVariable())) {
                 values = field.getValues();
@@ -460,9 +454,7 @@ public class NodeSubscription {
                 }
             }
             else if ("pubsub#include_body".equals(field.getVariable())) {
-                values = field.getValues();
-                booleanValue = (values.size() > 0 ? values.get(0) : "1");
-                includingBody = "1".equals(booleanValue);
+                includingBody = parseFirstValueAsBoolean( field, true ) ;
             }
             else if ("pubsub#show-values".equals(field.getVariable())) {
                 // Get the new list of presence states for which an entity wants to
@@ -501,10 +493,10 @@ public class NodeSubscription {
         // Check if the service needs to subscribe or unsubscribe from the owner presence
         if (!node.isPresenceBasedDelivery() && wasUsingPresence != !presenceStates.isEmpty()) {
             if (presenceStates.isEmpty()) {
-				node.getService().presenceSubscriptionNotRequired(node, owner);
+                node.getService().presenceSubscriptionNotRequired(node, owner);
             }
             else {
-				node.getService().presenceSubscriptionRequired(node, owner);
+                node.getService().presenceSubscriptionRequired(node, owner);
             }
         }
     }
@@ -701,7 +693,7 @@ public class NodeSubscription {
         }
         // Check if delivery is subject to presence-based policy
         if (!getPresenceStates().isEmpty()) {
-			Collection<String> shows = node.getService().getShowPresences(jid);
+            Collection<String> shows = node.getService().getShowPresences(jid);
             if (shows.isEmpty() || Collections.disjoint(getPresenceStates(), shows)) {
                 return false;
             }
@@ -709,8 +701,8 @@ public class NodeSubscription {
         // Check if node is only sending events when user is online
         if (node.isPresenceBasedDelivery()) {
             // Check that user is online
-			if (node.getService().getShowPresences(jid).isEmpty())
-			{
+            if (node.getService().getShowPresences(jid).isEmpty())
+            {
                 return false;
             }
         }
@@ -778,7 +770,7 @@ public class NodeSubscription {
             subscribeOptions.addElement("required");
         }
         // Send the result
-		node.getService().send(result);
+        node.getService().send(result);
     }
 
     /**
@@ -789,9 +781,17 @@ public class NodeSubscription {
      * Depending on the subscription configuration the event notification may or may not have
      * a payload, may not be sent if a keyword (i.e. filter) was defined and it was not matched.
      *
+     * <p>Sending the last published item can also be entirely disabled by setting
+     * <tt>xmpp.pubsub.disable-delayed-delivery</tt> to <tt><true</tt>.</p>
+     *
      * @param publishedItem the last item that was published to the node.
      */
     void sendLastPublishedItem(PublishedItem publishedItem) {
+        // Check to see if we've been disabled
+        if (JiveGlobals.getBooleanProperty("xmpp.pubsub.disable-delayed-delivery", false)) {
+            return;
+        }
+
         // Check if the published item can be sent to the subscriber
         if (!canSendPublicationEvent(publishedItem.getNode(), publishedItem)) {
             return;
@@ -817,7 +817,7 @@ public class NodeSubscription {
         notification.getElement().addElement("delay", "urn:xmpp:delay")
                 .addAttribute("stamp", XMPPDateTimeFormat.format(publishedItem.getCreationDate()));
         // Send the event notification to the subscriber
-		node.getService().sendNotification(node, notification, jid);
+        node.getService().sendNotification(node, notification, jid);
     }
 
     /**
@@ -829,7 +829,7 @@ public class NodeSubscription {
      * @return true if the specified user is allowed to modify or cancel the subscription.
      */
     boolean canModify(JID user) {
-		return user.equals(getJID()) || user.equals(getOwner()) || node.getService().isServiceAdmin(user);
+        return user.equals(getJID()) || user.equals(getOwner()) || node.getService().isServiceAdmin(user);
     }
 
     /**
@@ -844,7 +844,7 @@ public class NodeSubscription {
     }
 
     @Override
-	public String toString() {
+    public String toString() {
         return super.toString() + " - JID: " + getJID() + " - State: " + getState().name();
     }
 
@@ -882,9 +882,9 @@ public class NodeSubscription {
         Message authRequest = new Message();
         authRequest.addExtension(node.getAuthRequestForm(this));
         authRequest.setTo(owner);
-		authRequest.setFrom(node.getService().getAddress());
+        authRequest.setFrom(node.getService().getAddress());
         // Send authentication request to node owners
-		node.getService().send(authRequest);
+        node.getService().send(authRequest);
     }
 
     /**
@@ -895,7 +895,7 @@ public class NodeSubscription {
         Message authRequest = new Message();
         authRequest.addExtension(node.getAuthRequestForm(this));
         // Send authentication request to node owners
-		node.getService().broadcast(node, authRequest, node.getOwners());
+        node.getService().broadcast(node, authRequest, node.getOwners());
     }
 
     /**

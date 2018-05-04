@@ -1,7 +1,4 @@
-/**
- * $Revision: 4005 $
- * $Date: 2006-06-16 08:58:27 -0700 (Fri, 16 Jun 2006) $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,7 +42,7 @@ import org.slf4j.LoggerFactory;
  */
 public class TaskEngine {
 
-	private static final Logger Log = LoggerFactory.getLogger(TaskEngine.class);
+    private static final Logger Log = LoggerFactory.getLogger(TaskEngine.class);
     private static TaskEngine instance = new TaskEngine();
 
     /**
@@ -80,14 +77,14 @@ public class TaskEngine {
      *      upon completion.
      */
     public Future<?> submit(Runnable task) {
-    	try {
-    		return executor.submit(task);
-    	} catch (Throwable t) {
-    		Log.warn("Failed to schedule task; will retry using caller's thread: {0}", t.getMessage());
-    		FutureTask<?> result = new FutureTask<>(task, null);
-    		result.run();
-    		return result;
-    	}
+        try {
+            return executor.submit(task);
+        } catch (Throwable t) {
+            Log.warn("Failed to schedule task; will retry using caller's thread: {0}", t.getMessage());
+            FutureTask<?> result = new FutureTask<>(task, null);
+            result.run();
+            return result;
+        }
     }
 
     /**
@@ -302,13 +299,13 @@ public class TaskEngine {
         }
 
         @Override
-		public void run() {
-        	try {
-        		submit(task);
-        	} catch (Throwable t) {
-        		// need to catch here to prevent Timer from canceling TimerThread
-        		Log.error("Failed to execute TimerTask", t);
-        	}
+        public void run() {
+            try {
+                submit(task);
+            } catch (Throwable t) {
+                // need to catch here to prevent Timer from canceling TimerThread
+                Log.error("Failed to execute TimerTask", t);
+            }
         }
     }
 }

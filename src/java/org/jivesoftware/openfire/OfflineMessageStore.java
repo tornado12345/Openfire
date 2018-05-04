@@ -1,8 +1,4 @@
-/**
- * $RCSfile$
- * $Revision: 2911 $
- * $Date: 2005-10-03 12:35:52 -0300 (Mon, 03 Oct 2005) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,13 +60,13 @@ import java.util.regex.Pattern;
  */
 public class OfflineMessageStore extends BasicModule implements UserEventListener {
 
-	private static final Logger Log = LoggerFactory.getLogger(OfflineMessageStore.class);
+    private static final Logger Log = LoggerFactory.getLogger(OfflineMessageStore.class);
 
     private static final String INSERT_OFFLINE =
         "INSERT INTO ofOffline (username, messageID, creationDate, messageSize, stanza) " +
         "VALUES (?, ?, ?, ?, ?)";
     private static final String LOAD_OFFLINE =
-        "SELECT stanza, creationDate FROM ofOffline WHERE username=?";
+        "SELECT stanza, creationDate FROM ofOffline WHERE username=? ORDER BY creationDate ASC";
     private static final String LOAD_OFFLINE_MESSAGE =
         "SELECT stanza FROM ofOffline WHERE username=? AND creationDate=?";
     private static final String SELECT_SIZE_OFFLINE =
@@ -208,11 +204,11 @@ public class OfflineMessageStore extends BasicModule implements UserEventListene
                         msgXML = matcher.replaceAll("");
                     }
                     try {
-                    	message = new OfflineMessage(creationDate,
+                        message = new OfflineMessage(creationDate,
                             xmlReader.read(new StringReader(msgXML)).getRootElement());
                     } catch (DocumentException de) {
-                    	Log.error("Failed to route packet (offline message): " + msgXML, de);
-                    	continue; // skip and process remaining offline messages
+                        Log.error("Failed to route packet (offline message): " + msgXML, de);
+                        continue; // skip and process remaining offline messages
                     }
                 }
 
@@ -446,7 +442,7 @@ public class OfflineMessageStore extends BasicModule implements UserEventListene
     }
 
     @Override
-	public void start() throws IllegalStateException {
+    public void start() throws IllegalStateException {
         super.start();
         // Initialize the pool of sax readers
         for (int i=0; i<POOL_SIZE; i++) {
@@ -460,7 +456,7 @@ public class OfflineMessageStore extends BasicModule implements UserEventListene
     }
 
     @Override
-	public void stop() {
+    public void stop() {
         super.stop();
         // Clean up the pool of sax readers
         xmlReaders.clear();

@@ -1,7 +1,4 @@
 <%--
-  -	$RCSfile$
-  -	$Revision: 3195 $
-  -	$Date: $
   -
   - Copyright (C) 2005-2008 Jive Software. All rights reserved.
   -
@@ -101,10 +98,10 @@
 <form action="compression-settings.jsp">
     <input type="hidden" name="csrf" value="${csrf}">
 
-	<div class="jive-contentBox" style="-moz-border-radius: 3px;">
+    <div class="jive-contentBox" style="-moz-border-radius: 3px;">
 
-	<h4><fmt:message key="compression.settings.client.policy" /></h4>
-	<table cellpadding="3" cellspacing="0" border="0">
+    <h4><fmt:message key="compression.settings.client.policy" /></h4>
+    <table cellpadding="3" cellspacing="0" border="0">
     <tbody>
         <tr valign="top">
             <td width="1%" nowrap>
@@ -133,11 +130,11 @@
     </tbody>
     </table>
 
-	<br>
-	<br>
+    <br>
+    <br>
 
-	<h4><fmt:message key="compression.settings.server.policy" /></h4>
-	<table cellpadding="3" cellspacing="0" border="0">
+    <h4><fmt:message key="compression.settings.server.policy" /></h4>
+    <table cellpadding="3" cellspacing="0" border="0">
     <tbody>
         <tr valign="top">
             <td width="1%" nowrap>
@@ -165,7 +162,7 @@
         </tr>
     </tbody>
     </table>
-	</div>
+    </div>
     <input type="submit" name="update" value="<fmt:message key="global.save_settings" />">
 </form>
 <!-- END compression settings -->

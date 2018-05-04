@@ -1,7 +1,4 @@
-/**
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,8 +51,8 @@ import org.xmlpull.v1.XmlPullParserFactory;
  * @author Alexander Wenckus
  */
 public class HttpBindServlet extends HttpServlet {
-	
-	private static final Logger Log = LoggerFactory.getLogger(HttpBindServlet.class);
+    
+    private static final Logger Log = LoggerFactory.getLogger(HttpBindServlet.class);
 
     private HttpSessionManager sessionManager;
     private HttpBindManager boshManager;
@@ -92,10 +89,10 @@ public class HttpBindServlet extends HttpServlet {
         sessionManager.stop();
     }
 
-	@Override
-	protected void service(HttpServletRequest request, HttpServletResponse response)
-			throws ServletException, IOException {
-		// add CORS headers for all HTTP responses (errors, etc.)
+    @Override
+    protected void service(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        // add CORS headers for all HTTP responses (errors, etc.)
         if (boshManager.isCORSEnabled())
         {
             if (boshManager.isAllOriginsAllowed()) {
@@ -149,7 +146,12 @@ public class HttpBindServlet extends HttpServlet {
         final AsyncContext context = request.startAsync();
 
         // Asynchronously reads the POSTed input, then triggers #processContent.
-        request.getInputStream().setReadListener(new ReadListenerImpl(context));
+        try {
+            request.getInputStream().setReadListener(new ReadListenerImpl(context));
+        } catch (IllegalStateException e) {
+            Log.warn("Error when setting read listener", e);
+            context.complete();
+        }
     }
 
     protected void processContent(AsyncContext context, String content)
@@ -190,8 +192,8 @@ public class HttpBindServlet extends HttpServlet {
         if (sid == null) {
             // When there's no Session ID, this should be a request to create a new session. If there's additional content,
             // something is wrong.
-        	if (node.elements().size() > 0) {
-        		// invalid session request; missing sid
+            if (node.elements().size() > 0) {
+                // invalid session request; missing sid
                 Log.info("Root element 'body' does not contain a SID attribute value in parsed request data from [" + remoteAddress + "]");
                 sendLegacyError(context, BoshBindingError.badRequest);
                 return;
@@ -235,10 +237,10 @@ public class HttpBindServlet extends HttpServlet {
 
         HttpSession session = sessionManager.getSession(sid);
         if (session == null) {
-        	if (Log.isDebugEnabled()) {
+            if (Log.isDebugEnabled()) {
                 Log.debug("Client provided invalid session: " + sid + ". [" +
                     context.getRequest().getRemoteAddr() + "]");
-        	}
+            }
             sendLegacyError(context, BoshBindingError.itemNotFound, "Invalid SID value.");
             return;
         }
@@ -325,6 +327,7 @@ public class HttpBindServlet extends HttpServlet {
         }
         finally {
             if (bindingError.getErrorType() == BoshBindingError.Type.terminate) {
+                Log.debug( "Closing session due to error: {}. Affected session: {}", bindingError, session );
                 session.close();
             }
         }

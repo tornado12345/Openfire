@@ -12,7 +12,6 @@ import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
@@ -315,7 +314,23 @@ public class ConnectionListener
         {
             start(); // won't actually start anything if not enabled.
         }
-        Log.debug( "Done restarting..." );
+        Log.info( "Done restarting..." );
+    }
+
+    /**
+     * Reconfigures the acceptor without breaking existing connections. Note that not all configuration changes
+     * can be applied. These changes will be applied after a restart.
+     */
+    public synchronized void reloadConfiguration()
+    {
+        if ( connectionAcceptor == null )
+        {
+            return; // There's no point in reloading config of a stopped instance. Config will be reloaded when started.
+        }
+
+        Log.debug( "Reconfiguring..." );
+        connectionAcceptor.reconfigure( generateConnectionConfiguration() );
+        Log.info( "Reconfigured." );
     }
 
     /**

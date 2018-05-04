@@ -1,6 +1,4 @@
 <%--
-  -	$Revision$
-  -	$Date$
   -
   - Copyright (C) 2004-2008 Jive Software. All rights reserved.
   -
@@ -264,11 +262,11 @@
         boolean current = false; // needed in session-row.jspf
         String linkURL = "session-details.jsp";
         for (ClientSession sess : sessions) {
-        	try { // skip invalid sessions (OF-590)
-        		if (!sess.validate()) continue;
-        	} catch (Exception ex) {
-        		continue;
-        	}
+            try { // skip invalid sessions (OF-590)
+                if (!sess.validate()) continue;
+            } catch (Exception ex) {
+                continue;
+            }
             count++;
     %>
         <%@ include file="session-row.jspf" %>

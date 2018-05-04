@@ -1,8 +1,4 @@
-/**
- * $RCSfile: $
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +26,6 @@ import org.jivesoftware.openfire.ConnectionCloseListener;
 import org.jivesoftware.openfire.PacketDeliverer;
 import org.jivesoftware.openfire.session.LocalSession;
 import org.jivesoftware.openfire.session.Session;
-import org.jivesoftware.openfire.spi.ConnectionConfiguration;
 import org.jivesoftware.util.LocaleUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,7 +42,7 @@ import org.slf4j.LoggerFactory;
  */
 public abstract class VirtualConnection implements Connection {
 
-	private static final Logger Log = LoggerFactory.getLogger(VirtualConnection.class);
+    private static final Logger Log = LoggerFactory.getLogger(VirtualConnection.class);
 
     protected LocalSession session;
 
@@ -91,7 +86,7 @@ public abstract class VirtualConnection implements Connection {
 
     @Override
     public boolean isClosed() {
-    	return state.get() == State.CLOSED;
+        return state.get() == State.CLOSED;
     }
 
     @Override
@@ -180,14 +175,19 @@ public abstract class VirtualConnection implements Connection {
         this.session = session;
     }
 
+    @Override
+    public void reinit(LocalSession session) {
+        this.session = session;
+    }
+
     /**
      * Closes the session, the virtual connection and notifies listeners that the connection
      * has been closed.
      */
     @Override
     public void close() {
-    	if (state.compareAndSet(State.OPEN, State.CLOSED)) {
-    		
+        if (state.compareAndSet(State.OPEN, State.CLOSED)) {
+            
             if (session != null) {
                 session.setStatus(Session.STATUS_CLOSED);
             }

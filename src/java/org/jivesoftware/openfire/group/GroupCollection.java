@@ -1,7 +1,4 @@
-/**
- * $Revision: 691 $
- * $Date: 2004-12-13 15:06:54 -0300 (Mon, 13 Dec 2004) $
- *
+/*
  * Copyright (C) 2004-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,12 +47,12 @@ public class GroupCollection extends AbstractCollection<Group> {
     }
 
     @Override
-	public Iterator<Group> iterator() {
+    public Iterator<Group> iterator() {
         return new GroupIterator();
     }
 
     @Override
-	public int size() {
+    public int size() {
         return elements.length;
     }
 

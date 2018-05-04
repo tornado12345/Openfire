@@ -1,7 +1,4 @@
-/**
- * $Revision: $
- * $Date: $
- *
+/*
  * Copyright (C) 2005-2008 Jive Software. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +27,7 @@ import org.jivesoftware.openfire.ConnectionManager;
 import org.jivesoftware.openfire.SessionManager;
 import org.jivesoftware.openfire.server.RemoteServerConfiguration.Permission;
 import org.jivesoftware.openfire.session.ConnectionSettings;
+import org.jivesoftware.openfire.session.DomainPair;
 import org.jivesoftware.openfire.session.Session;
 import org.jivesoftware.util.JiveGlobals;
 import org.jivesoftware.util.cache.Cache;
@@ -46,7 +44,7 @@ import org.slf4j.LoggerFactory;
  */
 public class RemoteServerManager {
 
-	private static final Logger Log = LoggerFactory.getLogger(RemoteServerManager.class);
+    private static final Logger Log = LoggerFactory.getLogger(RemoteServerManager.class);
 
     private static final String ADD_CONFIGURATION =
         "INSERT INTO ofRemoteServerConf (xmppDomain,remotePort,permission) VALUES (?,?,?)";
@@ -91,11 +89,16 @@ public class RemoteServerManager {
         addConfiguration(config);
         // Check if the remote server was connected and proceed to close the connection
         for (Session session : SessionManager.getInstance().getIncomingServerSessions(domain)) {
+            Log.debug( "Closing session for domain '{}' as the domain is being blocked. Affected session: {}", domain, session );
             session.close();
         }
-        Session session = SessionManager.getInstance().getOutgoingServerSession(domain);
-        if (session != null) {
-            session.close();
+        // Can't just lookup a single remote server anymore, so check them all.
+        for (DomainPair domainPair : SessionManager.getInstance().getOutgoingDomainPairs()) {
+            if (domainPair.getRemote().equals(domain)) {
+                Session session = SessionManager.getInstance().getOutgoingServerSession(domainPair);
+                Log.debug( "Closing (domain-pair) session for domain '{}' as the domain is being blocked. Affected session: {}", domain, session );
+                session.close();
+            }
         }
     }
 
@@ -156,7 +159,7 @@ public class RemoteServerManager {
 
     /**
      * Returns the number of milliseconds to wait to connect to a remote server or read
-     * data from a remote server. Default timeout value is 20 seconds. Configure the
+     * data from a remote server. Default timeout value is 120 seconds. Configure the
      * <tt>xmpp.server.read.timeout</tt> global property to override the default value.
      *
      * @return the number of milliseconds to wait to connect to a remote server or read
@@ -347,13 +350,15 @@ public class RemoteServerManager {
         for (String hostname : SessionManager.getInstance().getIncomingServers()) {
             if (!canAccess(hostname)) {
                 for (Session session : SessionManager.getInstance().getIncomingServerSessions(hostname)) {
+                    Log.debug( "Closing session for hostname '{}' as a changed permission policy is taken into effect. Affected session: {}", hostname, session );
                     session.close();
                 }
             }
         }
-        for (String hostname : SessionManager.getInstance().getOutgoingServers()) {
-            if (!canAccess(hostname)) {
-                Session session = SessionManager.getInstance().getOutgoingServerSession(hostname);
+        for (DomainPair domainPair : SessionManager.getInstance().getOutgoingDomainPairs()) {
+            if (!canAccess(domainPair.getRemote())) {
+                Session session = SessionManager.getInstance().getOutgoingServerSession(domainPair);
+                Log.debug( "Closing session as a changed permission policy is taken into effect. Affected session: {}", session );
                 session.close();
             }
         }
