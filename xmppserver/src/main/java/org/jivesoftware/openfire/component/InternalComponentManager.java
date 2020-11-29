@@ -16,43 +16,40 @@
 
 package org.jivesoftware.openfire.component;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
-
 import org.dom4j.Element;
-import org.jivesoftware.openfire.PacketException;
-import org.jivesoftware.openfire.PacketRouter;
-import org.jivesoftware.openfire.RoutableChannelHandler;
-import org.jivesoftware.openfire.RoutingTable;
-import org.jivesoftware.openfire.XMPPServer;
+import org.jivesoftware.openfire.*;
+import org.jivesoftware.openfire.cluster.ClusterEventListener;
+import org.jivesoftware.openfire.cluster.ClusterManager;
+import org.jivesoftware.openfire.cluster.NodeID;
 import org.jivesoftware.openfire.container.BasicModule;
+import org.jivesoftware.openfire.disco.IQDiscoInfoHandler;
 import org.jivesoftware.openfire.disco.IQDiscoItemsHandler;
 import org.jivesoftware.openfire.session.ComponentSession;
+import org.jivesoftware.openfire.session.LocalComponentSession;
 import org.jivesoftware.util.JiveGlobals;
+import org.jivesoftware.util.cache.Cache;
 import org.jivesoftware.util.cache.CacheFactory;
+import org.jivesoftware.util.cache.CacheUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.xmpp.component.Component;
-import org.xmpp.component.ComponentException;
-import org.xmpp.component.ComponentManager;
-import org.xmpp.component.ComponentManagerFactory;
-import org.xmpp.component.IQResultListener;
+import org.xmpp.component.*;
 import org.xmpp.packet.IQ;
 import org.xmpp.packet.JID;
 import org.xmpp.packet.Packet;
 import org.xmpp.packet.Presence;
 
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+
 /**
- * Manages the registration and delegation of Components. The ComponentManager
- * is responsible for managing registration and delegation of {@link Component Components},
- * as well as offering a facade around basic server functionallity such as sending and
- * receiving of packets.<p>
+ * Manages the registration and delegation of Components, which includes External Components as well as components
+ * that run in the Openfire JVM.
+ *
+ * The ComponentManager is responsible for managing registration and delegation of {@link Component Components},
+ * as well as offering a facade around basic server functionality such as sending and receiving of packets.
  *
  * This component manager will be an internal service whose JID will be component.[domain]. So the
  * component manager will be able to send packets to other internal or external components and also
@@ -60,13 +57,39 @@ import org.xmpp.packet.Presence;
  *
  * @author Derek DeMoro
  */
-public class InternalComponentManager extends BasicModule implements ComponentManager, RoutableChannelHandler {
+public class InternalComponentManager extends BasicModule implements ClusterEventListener, ComponentManager, RoutableChannelHandler {
 
     private static final Logger Log = LoggerFactory.getLogger(InternalComponentManager.class);
 
+    public static final String COMPONENT_CACHE_NAME = "Components";
+
+    /**
+     * Cache (unlimited, never expire) that tracks what component is available on which cluster node.
+     * Key: component address, Value: identifier of each cluster node holding serving the component.
+     */
+    private Cache<JID, HashSet<NodeID>> componentCache;
+
+    /**
+     * A map that maps an address to a (facade for a) component.
+     *
+     * This map only contains data for components connected to the local cluster node.
+     */
     final private Map<String, RoutableComponents> routables = new ConcurrentHashMap<>();
+
+    /**
+     * A map that has service discovery information for components.
+     *
+     * This map contains data for components all over the cluster.
+     */
     private Map<String, IQ> componentInfo = new ConcurrentHashMap<>();
+
+    /**
+     * A map that maps the identify of an entity that requests a presence probe from
+     * a component (where the value is the JID of the component.
+     */
+    // FIXME this construct limits every probee to exactly one presence probe. If the probee requests another probe after the first, the first request is silently overwritten. That's unlikely to be intended.
     private Map<JID, JID> presenceMap = new ConcurrentHashMap<>();
+
     /**
      * Holds the list of listeners that will be notified of component events.
      */
@@ -97,6 +120,8 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
     public void initialize(XMPPServer server) {
         super.initialize(server);
         routingTable = server.getRoutingTable();
+        componentCache = CacheFactory.createCache( COMPONENT_CACHE_NAME );
+        ClusterManager.addListener( this );
     }
 
     @Override
@@ -117,10 +142,21 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
     @Override
     public void stop() {
         super.stop();
+        synchronized ( routables ) {
+            // OF-1700: Shut down each connected component properly, which benefits other cluster nodes.
+            final Set<String> subdomains = routables.keySet();
+            subdomains.forEach( this::removeComponent );
+        }
         if (getAddress() != null) {
             // Remove the route to this service
             XMPPServer.getInstance().getRoutingTable().removeComponentRoute(getAddress());
         }
+    }
+
+    @Override
+    public void destroy() {
+        super.destroy();
+        ClusterManager.removeListener( this );
     }
 
     @Override
@@ -134,7 +170,7 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
             }
             Log.debug("InternalComponentManager: Registering component for domain: " + subdomain);
             JID componentJID = new JID(subdomain + "." + serverDomain);
-            boolean notifyListeners = false;
+            boolean isNewComponentRoute = false; // A subdomain can be served by more than one Component instance (mainly for load distribution).
             if (routable != null) {
                 routable.addComponent(component);
             }
@@ -143,10 +179,11 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
                 routables.put(subdomain, routable);
 
                 if (!routingTable.hasComponentRoute(componentJID)) {
-                    notifyListeners = true;
+                    isNewComponentRoute = true;
                 }
                 // Add the route to the new service provided by the component
                 routingTable.addComponentRoute(componentJID, routable);
+                CacheUtil.addValueToMultiValuedCache( componentCache, componentJID, XMPPServer.getInstance().getNodeID(), HashSet::new );
             }
 
             // Initialize the new component
@@ -154,7 +191,7 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
                 component.initialize(componentJID, this);
                 component.start();
 
-                if (notifyListeners) {
+                if (isNewComponentRoute) {
                     // Notify listeners that a new component has been registered
                     notifyComponentRegistered(componentJID);
                     // Alert other nodes of new registered domain event
@@ -163,14 +200,23 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
 
                 // Check for potential interested users.
                 checkPresences();
-                // Send a disco#info request to the new component. If the component provides information
-                // then it will be added to the list of discoverable server items.
-                checkDiscoSupport(component, componentJID);
+
+                if (isNewComponentRoute) {
+                    // Send a disco#info request to the new component. If the component provides information
+                    // then it will be added to the list of discoverable server items.
+                    checkDiscoSupport( component, componentJID );
+                }
+                if (isNewComponentRoute) {
+                    // Send a SoftwareVersion (xep-0092) request to the new component. If the component provides information
+                    // then it will be added to the sesssion for that component.
+                    sendSoftwareVersion( component, componentJID );
+                }
                 Log.debug("InternalComponentManager: Component registered for domain: " + subdomain);
             }
             catch (Exception e) {
                 // Unregister the component's domain
                 routable.removeComponent(component);
+
                 if (e instanceof ComponentException) {
                     // Rethrow the exception
                     throw (ComponentException)e;
@@ -183,6 +229,7 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
                     // If there are no more components associated with this subdomain, remove it.
                     routables.remove(subdomain);
                     // Remove the route
+                    CacheUtil.removeValueFromMultiValuedCache( componentCache, componentJID, XMPPServer.getInstance().getNodeID() );
                     XMPPServer.getInstance().getRoutingTable().removeComponentRoute(componentJID);
                 }
             }
@@ -191,7 +238,11 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
 
     void notifyComponentRegistered(JID componentJID) {
         for (ComponentEventListener listener : listeners) {
-            listener.componentRegistered(componentJID);
+            try {
+                listener.componentRegistered(componentJID);
+            } catch (Exception e) {
+                Log.warn("An exception occurred while dispatching a 'componentRegistered' event!", e);
+            }
         }
     }
 
@@ -237,6 +288,7 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
                 JID componentJID = new JID(subdomain + "." + serverDomain);
 
                 // Remove the route for the service provided by the component
+                CacheUtil.removeValueFromMultiValuedCache( componentCache, componentJID, XMPPServer.getInstance().getNodeID() );
                 routingTable.removeComponentRoute(componentJID);
 
                 // Ask the component to shutdown
@@ -264,7 +316,11 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
 
     void notifyComponentUnregistered(JID componentJID) {
         for (ComponentEventListener listener : listeners) {
-            listener.componentUnregistered(componentJID);
+            try {
+                listener.componentUnregistered(componentJID);
+            } catch (Exception e) {
+                Log.warn("An exception occurred while dispatching a 'componentUnregistered' event!", e);
+            }
         }
     }
 
@@ -334,6 +390,11 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
                 listener.componentInfoReceived(disco);
             }
         }
+    }
+
+    IQ getComponentInfo( JID domain )
+    {
+        return componentInfo.get( domain.toString() );
     }
 
     /**
@@ -425,7 +486,7 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
     }
 
     /**
-     * Registers Probeers who have not yet been serviced.
+     * Registers Probers who have not yet been serviced.
      *
      * @param prober the jid probing.
      * @param probee the presence being probed.
@@ -466,6 +527,25 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
         // Send the disco#info request to the component. The reply (if any) will be processed in
         // #process(Packet)
 //        sendPacket(component, iq);
+        component.processPacket(iq);
+    }
+
+    /**
+     *  Send a SoftwareVersion request to the new component. If the component provides information
+     *  then it will be added to the  session of current component.
+     *
+     * @param component the new component that was added to this manager.
+     * @param componentJID the XMPP address of the new component.
+     */
+    private void sendSoftwareVersion(Component component, JID componentJID) {
+        // Build a "jabber:iq:version" request that will be sent to the component
+        IQ iq = new IQ(IQ.Type.get);
+        iq.setFrom(getAddress());
+        iq.setTo(componentJID);
+        iq.setChildElement("query", "jabber:iq:version");
+        // Send the "jabber:iq:version" request to the component. The reply (if any) will be processed in
+        // #process(Packet) or org.jivesoftware.openfire.net.ComponentStanzaHandler#rocessIQ(Packet)
+        //sendPacket(component, iq);
         component.processPacket(iq);
     }
 
@@ -523,6 +603,39 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
                         notifyComponentInfo(iq);
                         // Alert other cluster nodes
                         CacheFactory.doClusterTask(new NotifyComponentInfo(iq));
+                    }else if ("query".equals(childElement.getQName().getName()) && "jabber:iq:version".equals(namespace)) {
+                        try {
+                            List<Element> elements =  childElement.elements();
+                            for (Component component : components) {
+                                if (component instanceof LocalComponentSession.LocalExternalComponent) {
+                                    LocalComponentSession.LocalExternalComponent externalComponent =
+                                            ( LocalComponentSession.LocalExternalComponent) component;
+                                    LocalComponentSession session = externalComponent.getSession();
+                                    if(session != null && session.getAddress() == iq.getFrom()){
+                                        if (elements.size() >0){
+                                            for (Element element : elements){
+                                                session.setSoftwareVersionData(element.getName(), element.getStringValue());
+                                            }
+                                        } 
+                                    }    
+
+                                }
+                            }  
+                        } catch (Exception e) {
+                            Log.error(e.getMessage(), e);
+                        }
+                    }else if("query".equals(childElement.getQName().getName()) && "http://jabber.org/protocol/disco#info".equals(namespace)){
+                        //XEP-0232 if responses service discovery can include detailed information about the software application
+                        for (Component component : components) {
+                            if (component instanceof LocalComponentSession.LocalExternalComponent) {
+                                LocalComponentSession.LocalExternalComponent externalComponent =
+                                        ( LocalComponentSession.LocalExternalComponent) component;
+                                LocalComponentSession session = externalComponent.getSession();
+                                if(session != null && session.getAddress() == iq.getFrom()){
+                                    IQDiscoInfoHandler.setSoftwareVersionDataFormFromDiscoInfo(childElement, session);
+                                }    
+                            }
+                        }  
                     }
                 }
             }
@@ -531,12 +644,156 @@ public class InternalComponentManager extends BasicModule implements ComponentMa
 
     void notifyComponentInfo(IQ iq) {
         for (ComponentEventListener listener : listeners) {
-            listener.componentInfoReceived(iq);
+            try {
+                listener.componentInfoReceived(iq);
+            } catch (Exception e) {
+                Log.warn("An exception occurred while dispatching a 'componentInfoReceived' event!", e);
+            }
         }
     }
 
     void addComponentInfo(IQ iq) {
         componentInfo.put(iq.getFrom().getDomain(), iq);
+    }
+
+    @Override
+    public void joinedCluster()
+    {
+        // The local node joined a cluster.
+        //
+        // Upon joining a cluster, clustered caches are reset to their clustered equivalent (by the swap from the local
+        // cache implementation to the clustered cache implementation that's done in the implementation of
+        // org.jivesoftware.util.cache.CacheFactory.joinedCluster). This means that they now hold data that's
+        // available on all other cluster nodes. Data that's available on the local node needs to be added again.
+        restoreCacheContent();
+
+        // We joined a cluster. Determine what components run on other nodes,
+        // and raise events for those that are not running on this node.
+        // Eventing should be limited to the local cluster node, as other nodes
+        // would already have had events when the components became available to
+        // them.
+        componentCache.entrySet().stream()
+            .filter( entrySet -> !entrySet.getValue().contains( XMPPServer.getInstance().getNodeID() ) )
+            .forEach( entry -> {
+                Log.debug( "The local cluster node joined the cluster. The component '{}' is living on one (or more) other cluster nodes, but not ours. Invoking the 'component registered' event, and requesting service info.", entry.getKey());
+                notifyComponentRegistered( entry.getKey() );
+                // Request one of the cluster nodes to sent us a NotifyComponentInfo instance. This async request does not block the current thread, and will update the instance eventually, after which notifications are sent out.
+                CacheFactory.doClusterTask( new RequestComponentInfoNotification( entry.getKey(), XMPPServer.getInstance().getNodeID() ), entry.getValue().iterator().next().toByteArray() );
+            } );
+
+        // Additionally, let other cluster nodes know about the components that the local
+        // node offers, to allow them to raise events if needed.
+        componentCache.entrySet().stream()
+            .filter( entrySet -> entrySet.getValue().contains( XMPPServer.getInstance().getNodeID() ) && entrySet.getValue().size() == 1 )
+            .map( Map.Entry::getKey )
+            .forEach( componentJID -> {
+                Log.debug( "The local cluster node joined the cluster. The component '{}' is living on our cluster node, but not on any others. Invoking the 'component registered' (and if applicable, the 'component info received') event on the remote nodes.", componentJID );
+                CacheFactory.doClusterTask( new NotifyComponentRegistered( componentJID ) );
+                final IQ info = componentInfo.get( componentJID.toString() );
+                if ( info != null )
+                {
+                    CacheFactory.doClusterTask( new NotifyComponentInfo( info ) );
+                }
+            } );
+    }
+
+    @Override
+    public void joinedCluster( final byte[] nodeID )
+    {
+        // Another node joined a cluster that we're already part of. It is expected that
+        // the implementation of #joinedCluster() as executed on the cluster node that just
+        // joined will synchronize all relevant data. This method need not do anything.
+    }
+
+    @Override
+    public void leftCluster()
+    {
+        // The local cluster node left the cluster.
+        if (XMPPServer.getInstance().isShuttingDown()) {
+            // Do not put effort in restoring the correct state if we're shutting down anyway.
+            return;
+        }
+
+        // Upon leaving a cluster, clustered caches are reset to their local equivalent (by the swap from the clustered
+        // cache implementation to the default cache implementation that's done in the implementation of
+        // org.jivesoftware.util.cache.CacheFactory.leftCluster). This means that they now hold no data (as a new cache
+        // has been created). Data that's available on the local node needs to be added again.
+        restoreCacheContent();
+
+        // Determine what components that we are broadcasting were available only on other
+        // cluster nodes than the local one. For these, unavailability events need
+        // to be sent out (eventing will be limited to the local node, as we're no longer
+        // part of a cluster).
+        final Iterator<Map.Entry<String, IQ>> iterator = componentInfo.entrySet().iterator();
+        while (iterator.hasNext()) {
+            // TODO: Iterating over the 'componentInfo' is not ideal, as there might be components for which there is no recorded data in 'componentInfo'. There currently is no other way to determine what components were active on the cluster though.
+            final Map.Entry<String, IQ> entry = iterator.next();
+            final JID domain = new JID(entry.getKey());
+            if ( !componentCache.containsKey( domain ) ) {
+                Log.debug( "The local cluster node left the cluster. The component '{}' was living on one (or more) other cluster nodes, and is no longer available. Invoking the 'component unregistered' event.", domain );
+                notifyComponentUnregistered( domain );
+
+                // Also clean up the cache of cluster-wide service discovery results.
+                iterator.remove();
+            }
+        }
+    }
+
+    @Override
+    public void leftCluster( final byte[] nodeID )
+    {
+        // Another node left the cluster.
+        //
+        // If the cluster node leaves in an orderly fashion, it might have broadcasted
+        // the necessary events itself. This cannot be depended on, as the cluster node
+        // might have disconnected unexpectedly (as a result of a crash or network issue).
+        //
+        // Determine what components were available only on that node, and remove them.
+        // For these, 'component unavailable' events need to be sent out. If the cluster
+        // node exited cleanly, we won't find any entries to work on. If it did not
+        // exit cleanly, all remaining cluster nodes will be in a race to clean up the
+        // same data. The implementation below accounts for that, by only having the
+        // senior cluster node to perform the cleanup.
+        if (ClusterManager.isSeniorClusterMember())
+        {
+            final Map<Boolean, Map<JID, HashSet<NodeID>>> modified = CacheUtil.removeValueFromMultiValuedCache(componentCache, NodeID.getInstance(nodeID));
+
+            modified.get(false).keySet().forEach(removedDomain -> {
+                Log.debug("Cluster node {} just left the cluster, and was the only node on which component '{}' was living. Invoking the 'component unregistered' event on all remaining cluster nodes.",
+                          NodeID.getInstance(nodeID),
+                          removedDomain);
+                notifyComponentUnregistered(removedDomain);
+
+                // As we have removed the disappeared components from the clustered cache, other nodes
+                // can no longer determine what components became unavailable. We'll need to broadcast
+                // the unavailable event over the entire cluster!
+                CacheFactory.doClusterTask(new NotifyComponentUnregistered(removedDomain));
+
+                // Also clean up the cache of cluster-wide service discovery results.
+                componentInfo.remove(removedDomain.toString());
+            });
+        }
+    }
+
+    @Override
+    public void markedAsSeniorClusterMember()
+    {
+        // No action needed.
+    }
+
+    /**
+     * When the local node is joining or leaving a cluster, {@link org.jivesoftware.util.cache.CacheFactory} will swap
+     * the implementation used to instantiate caches. This causes the cache content to be 'reset': it will no longer
+     * contain the data that's provided by the local node. This method restores data that's provided by the local node
+     * in the cache. It is expected to be invoked right after joining ({@link #joinedCluster()} or leaving
+     * ({@link #leftCluster()} a cluster.
+     */
+    private void restoreCacheContent() {
+        Log.trace( "Restoring cache content for cache '{}' by adding all component domains that are provided by the local cluster node.", componentCache.getName() );
+        routingTable.getComponentsDomains().stream()
+            .map(JID::new)
+            .filter(domain -> routingTable.isLocalRoute(domain))
+            .forEach(domain -> CacheUtil.addValueToMultiValuedCache( componentCache, domain, XMPPServer.getInstance().getNodeID(), HashSet::new ) );
     }
 
     /**

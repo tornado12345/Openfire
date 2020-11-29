@@ -45,6 +45,7 @@ import org.slf4j.LoggerFactory;
  */
 public class LocaleUtils {
 
+    public static final String OPENFIRE_PLUGIN_NAME = "Openfire";
     private static final Logger Log = LoggerFactory.getLogger(LocaleUtils.class);
 
     private static final Map<Locale, String[][]> timeZoneLists =
@@ -64,7 +65,7 @@ public class LocaleUtils {
      *
      * @param localeCode the locale code for a Java locale. See the {@link java.util.Locale}
      *                   class for more details.
-     * @return The Java Locale that matches the locale code, or <tt>null</tt>.                  
+     * @return The Java Locale that matches the locale code, or {@code null}.
      */
     public static Locale localeCodeToLocale(String localeCode) {
         Locale locale = null;
@@ -392,6 +393,38 @@ public class LocaleUtils {
     }
 
     /**
+     * <p>Returns an internationalized string loaded from a plugins resource bundle using
+     * the Jive Locale. The name of resource bundle will be the lower-case word characters of the plugin name, with an
+     * {@code _18n} suffix.</p>
+     * <p>As a special case, if the plugin name is {@link #OPENFIRE_PLUGIN_NAME} then the standard Openfire i18n
+     * resource bundle is used.</p>
+     *
+     * @param pluginName The name of the plugin - as defined in plugin.xml
+     * @param key        The key to use for retrieving the string from the
+     *                   appropriate resource bundle
+     * @return the localized string.
+     */
+    public static String getLocalizedPluginString(final String pluginName, final String key) {
+        if (pluginName.equals(OPENFIRE_PLUGIN_NAME)) {
+            return getLocalizedString(key);
+        }
+        final Locale locale = JiveGlobals.getLocale();
+        final String bundleName = pluginName.replaceAll("\\W", "").toLowerCase() + "_i18n";
+        final PluginManager pluginManager = XMPPServer.getInstance().getPluginManager();
+        final ClassLoader bundleClassLoader = pluginManager.getPluginByName(pluginName)
+            .map(pluginManager::getPluginClassloader)
+            .map(pluginClassLoader -> (ClassLoader) pluginClassLoader)
+            .orElseGet(() -> Thread.currentThread().getContextClassLoader());
+        try {
+            final ResourceBundle bundle = ResourceBundle.getBundle(bundleName, locale, bundleClassLoader);
+            return getLocalizedString(key, locale, null, bundle);
+        } catch (final MissingResourceException mre) {
+            Log.error("Unable to load bundle {} from the {} class loader", bundleName, pluginName, mre);
+            return getDefaultLocalizedString(key);
+        }
+    }
+
+    /**
      * Returns an internationalized string loaded from a resource bundle using
      * the locale specified by JiveGlobals.getLocale() substituting the passed
      * in arguments. Substitution is handled using the
@@ -412,7 +445,7 @@ public class LocaleUtils {
 
     /**
      * Returns an internationalized string loaded from a resource bundle from the passed
-     * in plugin. If the plugin name is <tt>null</tt>, the key will be looked up using
+     * in plugin. If the plugin name is {@code null}, the key will be looked up using
      * the standard resource bundle.
      *
      * @param key the key to use for retrieving the string from the
@@ -426,7 +459,7 @@ public class LocaleUtils {
 
     /**
      * Returns an internationalized string loaded from a resource bundle from the passed
-     * in plugin. If the plugin name is <tt>null</tt>, the key will be looked up using
+     * in plugin. If the plugin name is {@code null}, the key will be looked up using
      * the standard resource bundle.
      *
      * @param key the key to use for retrieving the string from the
@@ -444,10 +477,10 @@ public class LocaleUtils {
      * Returns an internationalized string loaded from a resource bundle from
      * the passed in plugin, using the passed in Locale.
      * 
-     * If the plugin name is <tt>null</tt>, the key will be looked up using the
+     * If the plugin name is {@code null}, the key will be looked up using the
      * standard resource bundle.
      * 
-     * If the locale is <tt>null</tt>, the Jive Global locale will be used.
+     * If the locale is {@code null}, the Jive Global locale will be used.
      * 
      * @param key
      *            the key to use for retrieving the string from the appropriate
@@ -462,7 +495,7 @@ public class LocaleUtils {
      *            the locale to use for retrieving the appropriate
      *            locale-specific string.
      * @param fallback
-     *            if <tt>true</tt>, the global locale used by Openfire will be
+     *            if {@code true}, the global locale used by Openfire will be
      *            used if the requested locale is not available)
      * @return the localized string.
      */

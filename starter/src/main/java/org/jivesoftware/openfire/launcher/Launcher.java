@@ -71,6 +71,9 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 
+import static javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD;
+import static javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA;
+
 /**
  * Graphical launcher for Openfire.
  *
@@ -96,6 +99,7 @@ public class Launcher {
 
     /**
      * Creates a new Launcher object.
+     * @throws AWTException if there is a problem with AWT
      */
     public Launcher() throws AWTException {
         // Initialize the SystemTray now (to avoid a bug!)
@@ -405,6 +409,8 @@ public class Launcher {
 
     /**
      * Creates a new GUI launcher instance.
+     * @param args The command line arguments
+     * @throws AWTException if AWT cannot be initialised
      */
     public static void main(String[] args) throws AWTException {
         new Launcher();
@@ -572,6 +578,8 @@ public class Launcher {
             // Note, we use standard DOM to read in the XML. This is necessary so that
             // Launcher has fewer dependencies.
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setAttribute(ACCESS_EXTERNAL_DTD, "");
+            factory.setAttribute(ACCESS_EXTERNAL_SCHEMA, "");
             Document document = factory.newDocumentBuilder().parse(configFile);
             Element rootElement = document.getDocumentElement();
             Element adminElement = (Element)rootElement.getElementsByTagName("adminConsole").item(0);

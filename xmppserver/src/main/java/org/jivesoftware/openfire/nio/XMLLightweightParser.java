@@ -213,9 +213,8 @@ class XMLLightweightParser {
         boolean isHighSurrogate = false;
         for (int i = 0; i < readChar; i++) {
             ch = buf[i];
-            if (ch < 0x20 && ch != 0x9 && ch != 0xA && ch != 0xD && ch != 0x0) {
+            if (ch < 0x20 && ch != 0x9 && ch != 0xA && ch != 0xD) {
                  //Unicode characters in the range 0x0000-0x001F other than 9, A, and D are not allowed in XML
-                 //We need to allow the NULL character, however, for Flash XMLSocket clients to work.
                 buffer = null;
                 throw new XMLNotWellFormedException("Character is invalid in: " + ch);
             }
@@ -334,8 +333,7 @@ class XMLLightweightParser {
                     if (insideRootTag && (head.length() == 14 || head.length() == 5 || head.length() == 13)) {
                         final String headString = head.toString();
                         if ("stream:stream>".equals(headString)
-                            || "?xml>".equals(headString)
-                            || "flash:stream>".equals(headString)) {
+                            || "?xml>".equals(headString)) {
                             // Found closing stream:stream
                             int end = buffer.length() - readChar + (i + 1);
                             // Skip LF, CR and other "weird" characters that could appear
@@ -387,7 +385,7 @@ class XMLLightweightParser {
         }
         if (head.length() == 15 || head.length() == 14) {
             final String headString = head.toString();
-            if ("/stream:stream>".equals(headString) || ("/flash:stream>".equals(headString))) {
+            if ("/stream:stream>".equals(headString)) {
                 foundMsg("</stream:stream>");
             }
         }
@@ -400,7 +398,7 @@ class XMLLightweightParser {
      * 
      * @param string
      *            The input string
-     * @return <tt>true</tt> if the input string contains an invalid numeric character reference, <tt>false</tt>
+     * @return {@code true} if the input string contains an invalid numeric character reference, {@code false}
      *         otherwise.
      * @see http://www.w3.org/TR/2008/REC-xml-20081126/#dt-charref
      */
@@ -444,7 +442,7 @@ class XMLLightweightParser {
      * 
      * @param value
      *            the codepoint
-     * @return <tt>true</tt> if the codepoint is a valid charater per XML 1.0 definition, <tt>false</tt> otherwise.
+     * @return {@code true} if the codepoint is a valid charater per XML 1.0 definition, {@code false} otherwise.
      * @see http://www.w3.org/TR/2008/REC-xml-20081126/#NT-Char
      */
     public static boolean isLegalXmlCharacter(int value) {

@@ -16,27 +16,16 @@
 
 package org.jivesoftware.openfire.session;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.net.Socket;
-import java.nio.charset.StandardCharsets;
-import java.util.*;
-import java.util.regex.Pattern;
-
-import javax.net.ssl.SSLHandshakeException;
-
 import org.dom4j.DocumentException;
 import org.dom4j.Element;
 import org.dom4j.io.XMPPPacketReader;
-import org.jivesoftware.openfire.Connection;
-import org.jivesoftware.openfire.RoutingTable;
-import org.jivesoftware.openfire.SessionManager;
-import org.jivesoftware.openfire.StreamID;
-import org.jivesoftware.openfire.XMPPServer;
+import org.jivesoftware.openfire.*;
 import org.jivesoftware.openfire.auth.UnauthorizedException;
-import org.jivesoftware.openfire.net.*;
+import org.jivesoftware.openfire.event.ServerSessionEventDispatcher;
+import org.jivesoftware.openfire.net.MXParser;
+import org.jivesoftware.openfire.net.SASLAuthentication;
+import org.jivesoftware.openfire.net.SocketConnection;
+import org.jivesoftware.openfire.net.SocketUtil;
 import org.jivesoftware.openfire.server.OutgoingServerSocketReader;
 import org.jivesoftware.openfire.server.RemoteServerManager;
 import org.jivesoftware.openfire.server.ServerDialback;
@@ -47,17 +36,27 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-import org.xmpp.packet.IQ;
-import org.xmpp.packet.JID;
-import org.xmpp.packet.Message;
-import org.xmpp.packet.Packet;
-import org.xmpp.packet.PacketError;
-import org.xmpp.packet.Presence;
+import org.xmpp.packet.*;
+
+import javax.net.ssl.SSLException;
+import javax.net.ssl.SSLHandshakeException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.Socket;
+import java.net.SocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Server-to-server communication is done using two TCP connections between the servers. One
  * connection is used for sending packets while the other connection is used for receiving packets.
- * The <tt>OutgoingServerSession</tt> represents the connection to a remote server that will only
+ * The {@code OutgoingServerSession} represents the connection to a remote server that will only
  * be used for sending packets.<p>
  *
  * Currently only the Server Dialback method is being used for authenticating with the remote
@@ -136,6 +135,8 @@ public class LocalOutgoingServerSession extends LocalServerSession implements Ou
             {
                 // Do nothing since the domain has already been authenticated.
                 log.debug( "Authentication successful (domain was already authenticated in the pre-existing session)." );
+                //inform all listeners as well.
+                ServerSessionEventDispatcher.dispatchEvent(session, ServerSessionEventDispatcher.EventType.session_created);
                 return true;
             }
             if (session != null && !session.isUsingServerDialback() )
@@ -212,6 +213,8 @@ public class LocalOutgoingServerSession extends LocalServerSession implements Ou
                     session.addOutgoingDomainPair(localDomain, remoteDomain);
                     sessionManager.outgoingServerSessionCreated((LocalOutgoingServerSession) session);
                     log.debug( "Authentication successful." );
+                    //inform all listeners as well.
+                    ServerSessionEventDispatcher.dispatchEvent(session, ServerSessionEventDispatcher.EventType.session_created);
                     return true;
                 } else {
                     log.warn( "Unable to authenticate: Fail to create new session." );
@@ -250,14 +253,36 @@ public class LocalOutgoingServerSession extends LocalServerSession implements Ou
             log.info( "Unable to create new session: Cannot create a plain socket connection with any applicable remote host." );
             return null;
         }
-        final Socket socket = socketToXmppDomain.getKey();
-        final boolean directTLS = socketToXmppDomain.getValue();
+        Socket socket = socketToXmppDomain.getKey();
+        boolean directTLS = socketToXmppDomain.getValue();
 
         SocketConnection connection = null;
         try {
+            final SocketAddress socketAddress = socket.getRemoteSocketAddress();
+            log.debug( "Opening a new connection to {} {}.", socketAddress, directTLS ? "using directTLS" : "that is initially not encrypted" );
             connection = new SocketConnection(XMPPServer.getInstance().getPacketDeliverer(), socket, false);
             if (directTLS) {
-                connection.startTLS(true, directTLS);
+                try {
+                    connection.startTLS( true, true );
+                } catch ( SSLException ex ) {
+                    if ( JiveGlobals.getBooleanProperty(ConnectionSettings.Server.TLS_ON_PLAIN_DETECTION_ALLOW_NONDIRECTTLS_FALLBACK, true) && ex.getMessage().contains( "plaintext connection?" ) ) {
+                        Log.warn( "Plaintext detected on a new connection that is was started in DirectTLS mode (socket address: {}). Attempting to restart the connection in non-DirectTLS mode.", socketAddress );
+                        try {
+                            // Close old socket
+                            socket.close();
+                        } catch ( Exception e ) {
+                            Log.debug( "An exception occurred (and is ignored) while trying to close a socket that was already in an error state.", e );
+                        }
+                        socket = new Socket();
+                        socket.connect( socketAddress, RemoteServerManager.getSocketTimeout() );
+                        connection = new SocketConnection(XMPPServer.getInstance().getPacketDeliverer(), socket, false);
+                        directTLS = false;
+                        Log.info( "Re-established connection to {}. Proceeding without directTLS.", socketAddress );
+                    } else {
+                        // Do not retry as non-DirectTLS, rethrow the exception.
+                        throw ex;
+                    }
+                }
             }
 
             log.debug( "Send the stream header and wait for response..." );
@@ -727,11 +752,31 @@ public class LocalOutgoingServerSession extends LocalServerSession implements Ou
 
     @Override
     public boolean checkOutgoingDomainPair(String localDomain, String remoteDomain) {
-         return outgoingDomainPairs.contains(new DomainPair(localDomain, remoteDomain));
+        final DomainPair pair = new DomainPair(localDomain, remoteDomain);
+        final boolean result =  outgoingDomainPairs.contains(pair);
+        Log.trace( "Authentication exists for outgoing domain pair {}: {}", pair, result );
+        return result;
     }
 
     @Override
     public Collection<DomainPair> getOutgoingDomainPairs() {
         return outgoingDomainPairs;
+    }
+
+    @Override
+    public String toString()
+    {
+        return this.getClass().getSimpleName() +"{" +
+            "address=" + getAddress() +
+            ", streamID=" + getStreamID() +
+            ", status=" + getStatus() +
+            (getStatus() == STATUS_AUTHENTICATED ? " (authenticated)" : "" ) +
+            (getStatus() == STATUS_CONNECTED ? " (connected)" : "" ) +
+            (getStatus() == STATUS_CLOSED ? " (closed)" : "" ) +
+            ", isSecure=" + isSecure() +
+            ", isDetached=" + isDetached() +
+            ", isUsingServerDialback=" + isUsingServerDialback() +
+            ", outgoingDomainPairs=" + getOutgoingDomainPairs().stream().map( DomainPair::toString ).collect(Collectors.joining(", ", "{", "}")) +
+            '}';
     }
 }

@@ -45,8 +45,10 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Implements JEP-0013: Flexible Offline Message Retrieval. Allows users to request number of
@@ -108,6 +110,9 @@ public class IQOfflineMessagesHandler extends IQHandler implements ServerFeature
                     OfflineMessage offlineMsg = messageStore.getMessage(from.getNode(), creationDate);
                     if (offlineMsg != null) {
                         sendOfflineMessage(from, offlineMsg);
+                    } else {
+                        // If the requester is authorized but the node does not exist, the server MUST return a <item-not-found/> error.
+                        reply.setError(PacketError.Condition.item_not_found);
                     }
                 }
                 else if ("remove".equals(item.attributeValue("action"))) {
@@ -156,6 +161,10 @@ public class IQOfflineMessagesHandler extends IQHandler implements ServerFeature
 
     @Override
     public DataForm getExtendedInfo(String name, String node, JID senderJID) {
+        return IQDiscoInfoHandler.getFirstDataForm(this.getExtendedInfos(name, node, senderJID));
+    }
+    @Override
+    public Set<DataForm> getExtendedInfos(String name, String node, JID senderJID) {
         // Mark that offline messages shouldn't be sent when the user becomes available
         stopOfflineFlooding(senderJID);
 
@@ -168,14 +177,16 @@ public class IQOfflineMessagesHandler extends IQHandler implements ServerFeature
 
         final FormField field2 = dataForm.addField();
         field2.setVariable("number_of_messages");
-        field2.addValue(String.valueOf(messageStore.getMessages(senderJID.getNode(), false).size()));
-
-        return dataForm;
+        field2.addValue(String.valueOf(messageStore.getCount(senderJID.getNode())));
+        
+        final Set<DataForm> dataForms = new HashSet<>();
+        dataForms.add(dataForm);
+        return dataForms;
     }
 
     @Override
     public boolean hasInfo(String name, String node, JID senderJID) {
-        return NAMESPACE.equals(node) && userManager.isRegisteredUser(senderJID.getNode());
+        return NAMESPACE.equals(node) && userManager.isRegisteredUser(senderJID, false);
     }
 
     @Override

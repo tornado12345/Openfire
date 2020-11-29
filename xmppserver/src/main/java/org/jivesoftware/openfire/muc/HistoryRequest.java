@@ -23,7 +23,6 @@ import java.util.LinkedList;
 import java.util.ListIterator;
 
 import org.dom4j.Element;
-import org.jivesoftware.openfire.muc.spi.LocalMUCRole;
 import org.jivesoftware.util.XMPPDateTimeFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -131,7 +130,7 @@ public class HistoryRequest {
      * @param joinRole the user that will receive the history.
      * @param roomHistory the history of the room.
      */
-    public void sendHistory(LocalMUCRole joinRole, MUCRoomHistory roomHistory) {
+    public void sendHistory(MUCRole joinRole, MUCRoomHistory roomHistory) {
         if (!isConfigured()) {
             Iterator<Message> history = roomHistory.getMessageHistory();
             while (history.hasNext()) {

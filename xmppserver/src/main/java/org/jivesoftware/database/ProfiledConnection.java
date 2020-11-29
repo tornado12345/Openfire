@@ -1,12 +1,17 @@
-/**
- * $RCSfile$
- * $Revision: 1113 $
- * $Date: 2005-03-10 09:53:39 -0800 (Thu, 10 Mar 2005) $
- *
+/*
  * Copyright (C) 2004 Jive Software. All rights reserved.
  *
- * This software is published under the terms of the GNU Public License (GPL),
- * a copy of which is included in this distribution.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.jivesoftware.database;
@@ -17,8 +22,8 @@ import java.util.Map;
 
 /**
  * Wraps a Connection object and collects statistics about the database queries
- * that are performed.<p>
- * <p/>
+ * that are performed.
+ * <p>
  * Statistics of the profiled Connections can be obtained from the static
  * methods of this class. Instances of this class are the actual wrappers that
  * perform profiling.
@@ -101,7 +106,7 @@ public class ProfiledConnection extends AbstractConnection {
      * ProfiledConnection.INSERT, and ProfiledConnection.DELETE.
      *
      * @param type the type of query to get the count for.
-     * @return the number queries of type <tt>type</tt> performed.
+     * @return the number queries of type {@code type} performed.
      */
     public static long getQueryCount(Type type) {
         switch (type) {
@@ -637,7 +642,7 @@ public class ProfiledConnection extends AbstractConnection {
         private Statement stmt;
 
         /**
-         * Creates a new TimedStatement that wraps <tt>stmt</tt>.
+         * Creates a new TimedStatement that wraps {@code stmt}.
          *
          * @param stmt the statement.
          */

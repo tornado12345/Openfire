@@ -35,6 +35,8 @@ import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.WritableByteChannel;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * TLSStreamHandler is responsible for securing plain connections by negotiating TLS. By creating
@@ -87,6 +89,12 @@ public class TLSStreamHandler {
 
     /**
      * @deprecated Use the other constructor.
+     * @param connection the configuration for the connection
+     * @param socket the plain socket connection to secure
+     * @param clientMode unused parameter
+     * @param remoteServer unused parameter
+     * @param needClientAuth unused parameter
+     * @throws IOException if an exception occurs
      */
     @Deprecated
     public TLSStreamHandler(Connection connection, Socket socket, boolean clientMode, String remoteServer,
@@ -101,13 +109,14 @@ public class TLSStreamHandler {
 
     /**
      * Creates a new TLSStreamHandler and secures the plain socket connection. When connecting
-     * to a remote server then <tt>clientMode</tt> will be <code>true</code> and
-     * <tt>remoteServer</tt> is the server name of the remote server. Otherwise <tt>clientMode</tt>
-     * will be <code>false</code> and  <tt>remoteServer</tt> null.
+     * to a remote server then {@code clientMode} will be <code>true</code> and
+     * {@code remoteServer} is the server name of the remote server. Otherwise {@code clientMode}
+     * will be <code>false</code> and  {@code remoteServer} null.
      *
      * @param socket the plain socket connection to secure
+     * @param configuration the configuration for the connection
      * @param clientMode boolean indicating if this entity is a client or a server.
-     * @throws java.io.IOException
+     * @throws java.io.IOException if an exception occurs
      */
     public TLSStreamHandler(Socket socket, ConnectionConfiguration configuration, boolean clientMode) throws IOException {
         wrapper = new TLSWrapper(configuration, clientMode);
@@ -219,8 +228,10 @@ public class TLSStreamHandler {
                 try {
                     tlsEngine.closeInbound();
                 } catch (javax.net.ssl.SSLException ex) {
-                    // OF-1009 Process these as a 'normal' handshake rejection - it's the peer closing the connection abruptly.
-                    if ("Inbound closed before receiving peer's close_notify: possible truncation attack?".equals( ex.getMessage() ) ) {
+                    // OF-1830 / OF-1009 Process these as a 'normal' handshake rejection - it's the peer closing the connection abruptly.
+                    final List<String> ignorable = Arrays.asList( "closing inbound before receiving peer's close_notify",
+                                                                  "Inbound closed before receiving peer's close_notify: possible truncation attack?" );
+                    if ( ex.getMessage() != null && ignorable.stream().anyMatch( m -> ex.getMessage().contains( m ) ) ) {
                         throw new SSLHandshakeException( "The peer closed the connection while performing a TLS handshake." );
                     }
                     throw ex;

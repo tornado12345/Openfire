@@ -55,24 +55,30 @@ public class DefaultAdminProvider implements AdminProvider {
 
     /**
      * The default provider retrieves the comma separated list from the system property
-     * <tt>admin.authorizedJIDs</tt>
+     * {@code admin.authorizedJIDs}
      * @see org.jivesoftware.openfire.admin.AdminProvider#getAdmins()
      */
     @Override
     public List<JID> getAdmins() {
         // Add bare JIDs of users that are admins (may include remote users), primarily used to override/add to list of admin users
         final List<JID> adminList = ADMIN_JIDS.getValue();
+
+        // Prior to 4.4.0, the return value was mutable. To prevent issues, we'll keep that characteristic.
+        final List<JID> returnValue = new ArrayList<>();
+
         if (adminList.isEmpty()) {
             // Add default admin account when none was specified
-            return Collections.singletonList(new JID("admin", XMPPServer.getInstance().getServerInfo().getXMPPDomain(), null, true));
+            returnValue.add( new JID("admin", XMPPServer.getInstance().getServerInfo().getXMPPDomain(), null, true));
         } else {
-            return adminList;
+            returnValue.addAll( adminList );
         }
+
+        return returnValue;
     }
 
     /**
      * The default provider sets a comma separated list as the system property
-     * <tt>admin.authorizedJIDs</tt>
+     * {@code admin.authorizedJIDs}
      * @see org.jivesoftware.openfire.admin.AdminProvider#setAdmins(java.util.List)
      */
     @Override

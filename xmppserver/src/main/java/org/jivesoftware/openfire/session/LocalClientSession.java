@@ -26,7 +26,6 @@ import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.auth.AuthToken;
 import org.jivesoftware.openfire.auth.UnauthorizedException;
 import org.jivesoftware.openfire.cluster.ClusterManager;
-import org.jivesoftware.openfire.entitycaps.EntityCapabilities;
 import org.jivesoftware.openfire.entitycaps.EntityCapabilitiesManager;
 import org.jivesoftware.openfire.net.SASLAuthentication;
 import org.jivesoftware.openfire.privacy.PrivacyList;
@@ -55,7 +54,6 @@ public class LocalClientSession extends LocalSession implements ClientSession {
     private static final Logger Log = LoggerFactory.getLogger(LocalClientSession.class);
 
     private static final String ETHERX_NAMESPACE = "http://etherx.jabber.org/streams";
-    private static final String FLASH_NAMESPACE = "http://www.jabber.com/streams/flash";
 
     /**
      * Keep the list of IP address that are allowed to connect to the server.
@@ -99,7 +97,7 @@ public class LocalClientSession extends LocalSession implements ClientSession {
      */
     private boolean offlineFloodStopped = false;
 
-    private Presence presence = null;
+    private Presence presence;
 
     private int conflictCount = 0;
 
@@ -217,7 +215,7 @@ public class LocalClientSession extends LocalSession implements ClientSession {
 
     /**
      * Returns a newly created session between the server and a client. The session will
-     * be created and returned only if correct name/prefix (i.e. 'stream' or 'flash')
+     * be created and returned only if correct name/prefix ('stream')
      * and namespace were provided by the client.
      *
      * @param serverName the name of the server where the session is connecting to.
@@ -228,18 +226,15 @@ public class LocalClientSession extends LocalSession implements ClientSession {
      */
     public static LocalClientSession createSession(String serverName, XmlPullParser xpp, Connection connection)
             throws XmlPullParserException {
-        boolean isFlashClient = xpp.getPrefix().equals("flash");
-        connection.setFlashClient(isFlashClient);
 
         // Conduct error checking, the opening tag should be 'stream'
         // in the 'etherx' namespace
-        if (!xpp.getName().equals("stream") && !isFlashClient) {
+        if (!xpp.getName().equals("stream")) {
             throw new XmlPullParserException(
                     LocaleUtils.getLocalizedString("admin.error.bad-stream"));
         }
 
-        if (!xpp.getNamespace(xpp.getPrefix()).equals(ETHERX_NAMESPACE) &&
-                !(isFlashClient && xpp.getNamespace(xpp.getPrefix()).equals(FLASH_NAMESPACE)))
+        if (!xpp.getNamespace(xpp.getPrefix()).equals(ETHERX_NAMESPACE))
         {
             throw new XmlPullParserException(LocaleUtils.getLocalizedString(
                     "admin.error.bad-namespace"));
@@ -338,12 +333,7 @@ public class LocalClientSession extends LocalSession implements ClientSession {
         sb.append("<?xml version='1.0' encoding='");
         sb.append(CHARSET);
         sb.append("'?>");
-        if (isFlashClient) {
-            sb.append("<flash:stream xmlns:flash=\"http://www.jabber.com/streams/flash\" ");
-        }
-        else {
-            sb.append("<stream:stream ");
-        }
+        sb.append("<stream:stream ");
         sb.append("xmlns:stream=\"http://etherx.jabber.org/streams\" xmlns=\"jabber:client\" from=\"");
         sb.append(serverName);
         sb.append("\" id=\"");
@@ -630,6 +620,7 @@ public class LocalClientSession extends LocalSession implements ClientSession {
      * @param serverName name of the server.
      * @param connection The connection we are proxying.
      * @param streamID unique identifier of this session.
+     * @param language the language
      */
     public LocalClientSession(String serverName, Connection connection, StreamID streamID, Locale language) {
         super(serverName, connection, streamID, language);
@@ -697,7 +688,7 @@ public class LocalClientSession extends LocalSession implements ClientSession {
     /**
      * Initialize the session as an anonymous login. This automatically upgrades the session's
      * status to authenticated and enables many features that are not available until
-     * authenticated (obtaining managers for example).<p>
+     * authenticated (obtaining managers for example).
      */
     public void setAnonymousAuth() {
         // Anonymous users have a full JID. Use the random resource as the JID's node
@@ -944,6 +935,11 @@ public class LocalClientSession extends LocalSession implements ClientSession {
     @Override
     public void setMessageCarbonsEnabled(boolean enabled) {
         messageCarbonsEnabled = enabled;
+        if (ClusterManager.isClusteringStarted()) {
+            // Track information about the session and share it with other cluster nodes
+            Cache<String,ClientSessionInfo> cache = SessionManager.getInstance().getSessionInfoCache();
+            cache.put(getAddress().toString(), new ClientSessionInfo(this));
+        }
     }
 
     @Override
@@ -954,6 +950,11 @@ public class LocalClientSession extends LocalSession implements ClientSession {
     @Override
     public void setHasRequestedBlocklist(boolean hasRequestedBlocklist) {
         this.hasRequestedBlocklist = hasRequestedBlocklist;
+        if (ClusterManager.isClusteringStarted()) {
+            // Track information about the session and share it with other cluster nodes
+            Cache<String,ClientSessionInfo> cache = SessionManager.getInstance().getSessionInfoCache();
+            cache.put(getAddress().toString(), new ClientSessionInfo(this));
+        }
     }
 
     /**
@@ -963,7 +964,7 @@ public class LocalClientSession extends LocalSession implements ClientSession {
      * allow the packet to flow.
      *
      * @param packet the packet to analyze if it must be blocked.
-     * @return true if the specified packet must be blocked.
+     * @return true if the specified packet must *not* be blocked.
      */
     @Override
     public boolean canProcess(Packet packet) {
@@ -983,14 +984,41 @@ public class LocalClientSession extends LocalSession implements ClientSession {
 
     @Override
     public void deliver(Packet packet) throws UnauthorizedException {
-        if (conn != null) {
-            conn.deliver(packet);
+        synchronized ( streamManager )
+        {
+            if ( conn != null )
+            {
+                conn.deliver(packet);
+            }
+            streamManager.sentStanza(packet);
         }
-        streamManager.sentStanza(packet);
     }
 
     @Override
-    public String toString() {
-        return super.toString() + " presence: " + presence;
+    public String toString()
+    {
+        String peerAddress = "(not available)";
+        if ( getConnection() != null ) {
+        try {
+            peerAddress = getConnection().getHostAddress();
+        } catch ( UnknownHostException e ) {
+            Log.debug( "Unable to determine address for peer of local client session.", e );
+        }
+        }
+        return this.getClass().getSimpleName() +"{" +
+            "address=" + getAddress() +
+            ", streamID=" + getStreamID() +
+            ", status=" + getStatus() +
+            (getStatus() == STATUS_AUTHENTICATED ? " (authenticated)" : "" ) +
+            (getStatus() == STATUS_CONNECTED ? " (connected)" : "" ) +
+            (getStatus() == STATUS_CLOSED ? " (closed)" : "" ) +
+            ", isSecure=" + isSecure() +
+            ", isDetached=" + isDetached() +
+            ", serverName='" + getServerName() + '\'' +
+            ", isInitialized=" + isInitialized() +
+            ", hasAuthToken=" + (getAuthToken() != null) +
+            ", peer address='" + peerAddress +'\'' +
+            ", presence='" + getPresence().toString() + '\'' +
+            '}';
     }
 }

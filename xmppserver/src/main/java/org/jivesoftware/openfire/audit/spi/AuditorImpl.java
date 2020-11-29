@@ -121,8 +121,8 @@ public class AuditorImpl implements Auditor {
     }
 
     protected void setMaxValues(int totalSize, int fileSize, int days) {
-        maxTotalSize = (long) totalSize * 1024l * 1024l;
-        maxFileSize = (long) fileSize * 1024l * 1024l;
+        maxTotalSize = (long) totalSize * 1024L * 1024L;
+        maxFileSize = (long) fileSize * 1024L * 1024L;
         maxDays = days;
     }
 
@@ -290,16 +290,22 @@ public class AuditorImpl implements Auditor {
                         name.compareTo(oldestFile) < 0;
             }
         };
-        File[] files = baseFolder.listFiles(filter);
-        // Delete old audit files
-        for (File fileToDelete : files) {
-            if (fileToDelete.equals(currentAuditFile)) {
-                // Close current file
-                close();
-            }
-            if ( !fileToDelete.delete() )
+
+        final File[] files = baseFolder.listFiles(filter);
+        if ( files != null )
+        {
+            // Delete old audit files
+            for ( File fileToDelete : files )
             {
-                Log.warn( "Unable to delete file '{}' as part of regular log rotation based on age of file. (Openfire failed to clean up after itself)!", fileToDelete );
+                if ( fileToDelete.equals( currentAuditFile ) )
+                {
+                    // Close current file
+                    close();
+                }
+                if ( !fileToDelete.delete() )
+                {
+                    Log.warn( "Unable to delete file '{}' as part of regular log rotation based on age of file. (Openfire failed to clean up after itself)!", fileToDelete );
+                }
             }
         }
     }
@@ -316,8 +322,8 @@ public class AuditorImpl implements Auditor {
     * with `filesIndex=0´ and  `files.length=nr(existing jive.audit-YYYYmmdd-???.log files)´ - 
     * if there are 10 audit files (033-043) then nnn will be 10 instead of 44).<br>
     * If  `nnn=999´ then all audit data will be written to this file till the next day.<br>
-    * @param auditDate
-    * @throws IOException
+    * @param auditDate The date for which to write an audit file
+    * @throws IOException On any problem writing the file.
     */
     private void createAuditFile(Date auditDate) throws IOException {
         final String filePrefix = "jive.audit-" + dateFormat.format(auditDate) + "-";

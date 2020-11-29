@@ -22,7 +22,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
-import java.net.URLConnection;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashSet;
@@ -30,6 +30,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+
+import org.apache.jasper.JspC;
+import org.dom4j.Document;
+import org.jivesoftware.admin.FlashMessageTag;
+import org.jivesoftware.admin.PluginFilter;
+import org.jivesoftware.openfire.XMPPServer;
+import org.jivesoftware.util.JiveGlobals;
+import org.jivesoftware.util.LocaleUtils;
+import org.jivesoftware.util.StringUtils;
+import org.jivesoftware.util.SystemProperty;
+import org.jivesoftware.util.WebXmlUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.servlet.Filter;
 import javax.servlet.FilterConfig;
@@ -43,27 +56,18 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import org.apache.jasper.JspC;
-import org.dom4j.Document;
-import org.jivesoftware.admin.PluginFilter;
-import org.jivesoftware.util.JiveGlobals;
-import org.jivesoftware.util.StringUtils;
-import org.jivesoftware.util.WebXmlUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 /**
  * The plugin servlet acts as a proxy for web requests (in the admin console)
  * to plugins. Since plugins can be dynamically loaded and live in a different place
  * than normal Openfire admin console files, it's not possible to have them
  * added to the normal Openfire admin console web app directory.
  * <p>
- * The servlet listens for requests in the form <tt>/plugins/[pluginName]/[JSP File]</tt>
- * (e.g. <tt>/plugins/foo/example.jsp</tt>). It also listens for non JSP requests in the
- * form like <tt>/plugins/[pluginName]/images/*.png|gif</tt>,
- * <tt>/plugins/[pluginName]/scripts/*.js|css</tt> or
- * <tt>/plugins/[pluginName]/styles/*.css</tt> (e.g.
- * <tt>/plugins/foo/images/example.gif</tt>).
+ * The servlet listens for requests in the form {@code /plugins/[pluginName]/[JSP File]}
+ * (e.g. {@code /plugins/foo/example.jsp}). It also listens for non JSP requests in the
+ * form like {@code /plugins/[pluginName]/images/*.png|gif},
+ * {@code /plugins/[pluginName]/scripts/*.js|css} or
+ * {@code /plugins/[pluginName]/styles/*.css} (e.g.
+ * {@code /plugins/foo/images/example.gif}).
  * </p>
  * JSP files must be compiled and available via the plugin's class loader. The mapping
  * between JSP name and servlet class files is defined in [pluginName]/web/web.xml.
@@ -76,6 +80,13 @@ import org.slf4j.LoggerFactory;
 public class PluginServlet extends HttpServlet {
 
     private static final Logger Log = LoggerFactory.getLogger(PluginServlet.class);
+    private static final String CSRF_ATTRIBUTE = "csrf";
+
+    public static final SystemProperty<Boolean> ALLOW_LOCAL_FILE_READING = SystemProperty.Builder.ofType( Boolean.class )
+        .setKey( "plugins.servlet.allowLocalFileReading" )
+        .setDynamic( true )
+        .setDefaultValue( false )
+        .build();
 
     private static Map<String, GenericServlet> servlets;  // mapped using lowercase path (OF-1105)
     private static PluginManager pluginManager;
@@ -101,8 +112,17 @@ public class PluginServlet extends HttpServlet {
         }
         else {
             try {
+                final PluginMetadata pluginMetadata = getPluginMetadataFromPath(pathInfo);
+                if (pluginMetadata.isCsrfProtectionEnabled()) {
+                    if (!passesCsrf(request)) {
+                        request.getSession().setAttribute(FlashMessageTag.ERROR_MESSAGE_KEY, LocaleUtils.getLocalizedString("global.csrf.failed"));
+                        response.sendRedirect(request.getRequestURI());
+                        return;
+                    }
+                }
                 // Handle JSP requests.
                 if (pathInfo.endsWith(".jsp")) {
+                    setCSRF(request);
                     if (handleDevJSP(pathInfo, request, response)) {
                         return;
                     }
@@ -110,6 +130,7 @@ public class PluginServlet extends HttpServlet {
                 }
                 // Handle servlet requests.
                 else if (getServlet(pathInfo) != null) {
+                    setCSRF(request);
                     handleServlet(pathInfo, request, response);
                 }
                 // Handle image/other requests.
@@ -122,6 +143,27 @@ public class PluginServlet extends HttpServlet {
                 response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
             }
         }
+    }
+
+    private static void setCSRF(final HttpServletRequest request) {
+        final String csrf = StringUtils.randomString(32);
+        request.getSession().setAttribute(CSRF_ATTRIBUTE, csrf);
+        request.setAttribute(CSRF_ATTRIBUTE, csrf);
+    }
+
+    private boolean passesCsrf(final HttpServletRequest request) {
+        if (request.getMethod().equals("GET")) {
+            // No CSRF's for GET requests
+            return true;
+        }
+
+        final String sessionCsrf = (String) request.getSession().getAttribute(CSRF_ATTRIBUTE);
+        return sessionCsrf != null && sessionCsrf.equals(request.getParameter(CSRF_ATTRIBUTE));
+    }
+
+    private PluginMetadata getPluginMetadataFromPath(final String pathInfo) {
+        final String pluginName = pathInfo.split("/")[1];
+        return XMPPServer.getInstance().getPluginManager().getMetadata(pluginName);
     }
 
     /**
@@ -340,6 +382,7 @@ public class PluginServlet extends HttpServlet {
      * @param servlet the servlet.
      * @param relativeUrl the relative url where the servlet should be bound
      * @return the effective url that can be used to initialize the servlet
+     * @throws ServletException if the servlet is null
      */
     public static String registerServlet(PluginManager pluginManager,
             Plugin plugin, GenericServlet servlet, String relativeUrl)
@@ -363,6 +406,7 @@ public class PluginServlet extends HttpServlet {
      * @param plugin the owner of the servlet
      * @param url the relative url where servlet has been bound
      * @return the unregistered servlet, so that it can be destroyed
+     * @throws ServletException if the URL is missing
      */
     public static GenericServlet unregisterServlet(Plugin plugin, String url)
             throws ServletException {
@@ -449,7 +493,7 @@ public class PluginServlet extends HttpServlet {
 
 
     /**
-     * Handles a request for other web items (images, flash, applets, etc.)
+     * Handles a request for other web items (images, etc.)
      *
      * @param pathInfo the extra path info.
      * @param response the response object.
@@ -478,7 +522,21 @@ public class PluginServlet extends HttpServlet {
 
         if (environment != null) {
             file = new File(environment.getWebRoot(), contextPath);
+        } else {
+            if ( !ALLOW_LOCAL_FILE_READING.getValue() ) {
+                // If _not_ in a DEV environment, ensure that the file that's being served is a
+                // file that is part of Openfire. This guards against accessing files from the
+                // operating system, or other files that shouldn't be accessible via the web (OF-1886).
+                final Path absoluteHome = new File( JiveGlobals.getHomeDirectory() ).toPath().normalize().toAbsolutePath();
+                final Path absoluteLookup = file.toPath().normalize().toAbsolutePath();
+                if ( !absoluteLookup.startsWith( absoluteHome ) )
+                {
+                    response.setStatus( HttpServletResponse.SC_FORBIDDEN );
+                    return;
+                }
+            }
         }
+
         if (!file.exists()) {
             response.setStatus(HttpServletResponse.SC_NOT_FOUND);
             return;

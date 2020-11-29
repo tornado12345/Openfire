@@ -62,19 +62,23 @@ public class ServiceAddedEvent implements ClusterTask<Void> {
         // should really never occur.
         if (!XMPPServer.getInstance().getMultiUserChatManager().isServiceRegistered(subdomain)) {
             MultiUserChatService service = new MultiUserChatServiceImpl(subdomain, description, isHidden);
-            XMPPServer.getInstance().getMultiUserChatManager().registerMultiUserChatService(service);
+            XMPPServer.getInstance().getMultiUserChatManager().registerMultiUserChatService(service, false);
         }
     }
 
     @Override
     public void writeExternal(ObjectOutput out) throws IOException {
-        ExternalizableUtil.getInstance().writeSafeUTF(out, subdomain);
-        ExternalizableUtil.getInstance().writeSafeUTF(out, description);
+        final ExternalizableUtil externalizableUtil = ExternalizableUtil.getInstance();
+        externalizableUtil.writeSafeUTF(out, subdomain);
+        externalizableUtil.writeSafeUTF(out, description);
+        externalizableUtil.writeBoolean(out, isHidden);
     }
 
     @Override
     public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
-        subdomain = ExternalizableUtil.getInstance().readSafeUTF(in);
-        description = ExternalizableUtil.getInstance().readSafeUTF(in);
+        final ExternalizableUtil externalizableUtil = ExternalizableUtil.getInstance();
+        subdomain = externalizableUtil.readSafeUTF(in);
+        description = externalizableUtil.readSafeUTF(in);
+        isHidden = externalizableUtil.readBoolean(in);
     }
 }

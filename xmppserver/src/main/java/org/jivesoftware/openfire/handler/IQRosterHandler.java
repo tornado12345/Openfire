@@ -130,6 +130,12 @@ public class IQRosterHandler extends IQHandler implements ServerFeaturesProvider
             result.setError(PacketError.Condition.not_acceptable);
             return result;
         }
+        catch (UnauthorizedException e) {
+            IQ result = IQ.createResultIQ(packet);
+            result.setChildElement(packet.getChildElement().createCopy());
+            result.setError(PacketError.Condition.not_authorized);
+            return result;
+        }
         catch (Exception e) {
             if (e.getCause() instanceof IDNAException || e.getCause() instanceof IllegalArgumentException) {
                 Log.warn(LocaleUtils.getLocalizedString("admin.error") + e.getMessage());
@@ -166,7 +172,7 @@ public class IQRosterHandler extends IQHandler implements ServerFeaturesProvider
 
         try {
             if ((sender.getNode() == null || !RosterManager.isRosterServiceEnabled() ||
-                    !userManager.isRegisteredUser(sender.getNode())) &&
+                    !userManager.isRegisteredUser(sender, false)) &&
                     IQ.Type.get == type) {
                 // If anonymous user asks for his roster or roster service is disabled then
                 // return an empty roster
@@ -293,7 +299,7 @@ public class IQRosterHandler extends IQHandler implements ServerFeaturesProvider
             try {
                 Roster recipientRoster = userManager.getUser(recipient.getNode()).getRoster();
                 // Instead of deleting the sender in the recipient's roster, update it.
-                // http://issues.igniterealtime.org/browse/OF-720
+                // https://igniterealtime.atlassian.net/browse/OF-720
                 RosterItem rosterItem = recipientRoster.getRosterItem(sender);
                 // If the receiver doesn't have subscribed yet, delete the sender from the receiver's roster, too.
                 if (rosterItem.getRecvStatus().equals(RosterItem.RECV_SUBSCRIBE)) {

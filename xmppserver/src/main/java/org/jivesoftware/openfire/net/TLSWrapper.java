@@ -18,6 +18,7 @@ package org.jivesoftware.openfire.net;
 
 import java.nio.ByteBuffer;
 import java.security.*;
+import java.util.Arrays;
 
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLEngineResult;
@@ -29,6 +30,7 @@ import javax.net.ssl.SSLEngineResult.Status;
 import org.jivesoftware.openfire.Connection;
 import org.jivesoftware.openfire.spi.ConnectionConfiguration;
 import org.jivesoftware.openfire.spi.EncryptionArtifactFactory;
+import org.jivesoftware.util.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,6 +59,10 @@ public class TLSWrapper {
 
     /**
      * @deprecated Use the other constructor.
+     * @param connection the connection to wrap
+     * @param clientMode {@code true} to use client mode, {@code false} to use server mode
+     * @param needClientAuth unused parameter
+     * @param remoteServer unused parameter
      */
     @Deprecated
     public TLSWrapper(Connection connection, boolean clientMode, boolean needClientAuth, String remoteServer)
@@ -132,10 +138,23 @@ public class TLSWrapper {
     public ByteBuffer unwrap(ByteBuffer net, ByteBuffer app) throws SSLException {
         ByteBuffer out = app;
         out = resizeApplicationBuffer(out);// guarantees enough room for unwrap
+
+        // Record a hex dump of the buffer, but only when logging on level 'debug'.
+        // Create the dump before the buffer is being passed to tlsEngine, to ensure
+        // that the original content of the buffer is logged.
+        String hexDump = null;
+        if ( Log.isDebugEnabled() )
+        {
+            final ByteBuffer bb = net.duplicate();
+            final byte[] data = Arrays.copyOf( bb.array(), bb.limit() );
+            hexDump = StringUtils.encodeHex( data );
+        }
+
         try {
             tlsEngineResult = tlsEngine.unwrap( net, out );
         } catch ( SSLException e ) {
             if ( e.getMessage().startsWith( "Unsupported record version Unknown-" ) ) {
+                Log.debug( "Buffer that wasn't TLS: {}", hexDump );
                 throw new SSLException( "We appear to have received plain text data where we expected encrypted data. A common cause for this is a peer sending us a plain-text error message when it shouldn't send a message, but close the socket instead).", e );
             }
             else {
@@ -177,7 +196,7 @@ public class TLSWrapper {
     /**
      * Signals that no more outbound application data will be sent on this TLSHandler.
      *
-     * @throws SSLException
+     * @throws SSLException never
      */
     public void close() throws SSLException {
         // Indicate that application is done with engine

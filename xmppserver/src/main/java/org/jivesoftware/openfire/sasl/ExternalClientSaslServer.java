@@ -1,10 +1,13 @@
 package org.jivesoftware.openfire.sasl;
 
 import org.jivesoftware.openfire.Connection;
+import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.auth.AuthorizationManager;
 import org.jivesoftware.openfire.keystore.TrustStore;
+import org.jivesoftware.openfire.net.SASLAuthentication;
 import org.jivesoftware.openfire.session.LocalClientSession;
 import org.jivesoftware.util.CertificateManager;
+import org.jivesoftware.util.SystemProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,6 +28,13 @@ import java.util.ArrayList;
  */
 public class ExternalClientSaslServer implements SaslServer
 {
+    public static final SystemProperty<Boolean> PROPERTY_SASL_EXTERNAL_CLIENT_SUPPRESS_MATCHING_REALMNAME = SystemProperty.Builder
+        .ofType( Boolean.class )
+        .setKey( "xmpp.auth.sasl.external.client.suppress-matching-realmname" )
+        .setDefaultValue( true )
+        .setDynamic( true )
+        .build();
+
     public static final Logger Log = LoggerFactory.getLogger( ExternalClientSaslServer.class );
 
     public static final String NAME = "EXTERNAL";
@@ -64,8 +74,16 @@ public class ExternalClientSaslServer implements SaslServer
             throw new SaslException( "No peer certificates." );
         }
 
-        final TrustStore trustStore = connection.getConfiguration().getTrustStore();
-        final X509Certificate trusted = trustStore.getEndEntityCertificate( peerCertificates );
+        final X509Certificate trusted;
+        if ( SASLAuthentication.SKIP_PEER_CERT_REVALIDATION_CLIENT.getValue() ) {
+            // Trust that the peer certificate has been validated when TLS got established.
+            trusted = (X509Certificate) peerCertificates[0];
+        } else {
+            // Re-evaluate the validity of the peer certificate.
+            final TrustStore trustStore = connection.getConfiguration().getTrustStore();
+            trusted = trustStore.getEndEntityCertificate( peerCertificates );
+        }
+
         if ( trusted == null )
         {
             throw new SaslException( "Certificate chain of peer is not trusted." );
@@ -94,6 +112,13 @@ public class ExternalClientSaslServer implements SaslServer
         if ( response != null && response.length > 0 )
         {
             username = new String( response, StandardCharsets.UTF_8 );
+            if( PROPERTY_SASL_EXTERNAL_CLIENT_SUPPRESS_MATCHING_REALMNAME.getValue() && username.contains("@") ) {
+                String userUser = username.substring(0,username.lastIndexOf("@"));
+                String userRealm = username.substring((username.lastIndexOf("@")+1));
+                if ( XMPPServer.getInstance().getServerInfo().getXMPPDomain().equals( userRealm ) ) {
+                    username = userUser;
+                }
+            }
         }
         else
         {

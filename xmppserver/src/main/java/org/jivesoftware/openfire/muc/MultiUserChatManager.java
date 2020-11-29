@@ -40,7 +40,9 @@ import org.jivesoftware.openfire.muc.cluster.GetNewMemberRoomsRequest;
 import org.jivesoftware.openfire.muc.cluster.OccupantAddedEvent;
 import org.jivesoftware.openfire.muc.cluster.RoomInfo;
 import org.jivesoftware.openfire.muc.cluster.SeniorMemberServicesRequest;
+import org.jivesoftware.openfire.muc.cluster.ServiceAddedEvent;
 import org.jivesoftware.openfire.muc.cluster.ServiceInfo;
+import org.jivesoftware.openfire.muc.cluster.ServiceRemovedEvent;
 import org.jivesoftware.openfire.muc.cluster.ServiceUpdatedEvent;
 import org.jivesoftware.openfire.muc.spi.LocalMUCRoom;
 import org.jivesoftware.openfire.muc.spi.MUCPersistenceManager;
@@ -106,7 +108,7 @@ public class MultiUserChatManager extends BasicModule implements ClusterEventLis
         loadServices();
 
         for (MultiUserChatService service : mucServices.values()) {
-            registerMultiUserChatService(service);
+            registerMultiUserChatService(service, false);
         }
 
         // Add statistics
@@ -138,7 +140,7 @@ public class MultiUserChatManager extends BasicModule implements ClusterEventLis
         StatisticsManager.getInstance().removeStatistic(outgoingStatKey);
 
         for (MultiUserChatService service : mucServices.values()) {
-            unregisterMultiUserChatService(service.getServiceName());
+            unregisterMultiUserChatService(service.getServiceName(), false);
         }
     }
 
@@ -153,6 +155,10 @@ public class MultiUserChatManager extends BasicModule implements ClusterEventLis
      * @param service The MultiUserChatService to be registered.
      */
     public void registerMultiUserChatService(MultiUserChatService service) {
+        registerMultiUserChatService(service, true);
+    }
+
+    public void registerMultiUserChatService(MultiUserChatService service, boolean allNodes) {
         Log.debug("MultiUserChatManager: Registering MUC service "+service.getServiceName());
         try {
             ComponentManagerFactory.getComponentManager().addComponent(service.getServiceName(), service);
@@ -160,6 +166,9 @@ public class MultiUserChatManager extends BasicModule implements ClusterEventLis
         }
         catch (ComponentException e) {
             Log.error("MultiUserChatManager: Unable to add "+service.getServiceName()+" as component.", e);
+        }
+        if (allNodes) {
+            CacheFactory.doClusterTask(new ServiceAddedEvent(service.getServiceName(), service.getDescription(), service.isHidden()));
         }
     }
 
@@ -171,6 +180,10 @@ public class MultiUserChatManager extends BasicModule implements ClusterEventLis
      * @param subdomain The subdomain of the service to be unregistered.
      */
     public void unregisterMultiUserChatService(String subdomain) {
+        unregisterMultiUserChatService(subdomain, true);
+    }
+
+    public void unregisterMultiUserChatService(String subdomain, boolean allNodes) {
         Log.debug("MultiUserChatManager: Unregistering MUC service "+subdomain);
         MultiUserChatService service = mucServices.get(subdomain);
         if (service != null) {
@@ -182,6 +195,9 @@ public class MultiUserChatManager extends BasicModule implements ClusterEventLis
                 Log.error("MultiUserChatManager: Unable to remove "+subdomain+" from component manager.", e);
             }
             mucServices.remove(subdomain);
+        }
+        if (allNodes) {
+            CacheFactory.doClusterTask(new ServiceRemovedEvent(subdomain));
         }
     }
 
@@ -248,13 +264,13 @@ public class MultiUserChatManager extends BasicModule implements ClusterEventLis
         else {
             // Changing the subdomain, here's where it gets complex.
             // Unregister existing muc service
-            unregisterMultiUserChatService(subdomain);
+            unregisterMultiUserChatService(subdomain, false);
             // Update the information stored about the MUC service
             updateService(serviceID, subdomain, description);
             // Create new MUC service with new settings
             muc = new MultiUserChatServiceImpl(subdomain, description, muc.isHidden());
             // Register to new service
-            registerMultiUserChatService(muc);
+            registerMultiUserChatService(muc, false);
         }
     }
 
@@ -783,8 +799,7 @@ public class MultiUserChatManager extends BasicModule implements ClusterEventLis
             // Get transient rooms and persistent rooms with occupants from senior
             // cluster member and merge with local ones. If room configuration was
             // changed in both places then latest configuration will be kept
-            @SuppressWarnings("unchecked")
-            List<ServiceInfo> result = (List<ServiceInfo>) CacheFactory.doSynchronousClusterTask(
+            List<ServiceInfo> result = CacheFactory.doSynchronousClusterTask(
                     new SeniorMemberServicesRequest(), ClusterManager.getSeniorClusterMember().toByteArray());
             if (result != null) {
                 for (ServiceInfo serviceInfo : result) {
@@ -825,10 +840,9 @@ public class MultiUserChatManager extends BasicModule implements ClusterEventLis
     @Override
     @SuppressWarnings("unchecked")
     public void joinedCluster(byte[] nodeID) {
-        Object result = CacheFactory.doSynchronousClusterTask(new GetNewMemberRoomsRequest(), nodeID);
-        if (result instanceof List<?>) {
-            List<RoomInfo> rooms = (List<RoomInfo>) result;
-            for (RoomInfo roomInfo : rooms) {
+        List<RoomInfo> roomInfos = CacheFactory.doSynchronousClusterTask(new GetNewMemberRoomsRequest(), nodeID);
+        if ( roomInfos != null ) {
+            for (RoomInfo roomInfo : roomInfos) {
                 LocalMUCRoom remoteRoom = roomInfo.getRoom();
                 MultiUserChatServiceImpl service = (MultiUserChatServiceImpl)remoteRoom.getMUCService();
                 LocalMUCRoom localRoom = service.getLocalChatRoom(remoteRoom.getName());
@@ -854,7 +868,7 @@ public class MultiUserChatManager extends BasicModule implements ClusterEventLis
     @Override
     public void leftCluster(byte[] nodeID) {
         // Remove all room occupants linked to the defunct node as their sessions are cleaned out earlier
-        Log.debug("Removing orphaned occupants associated with defunct node: " +  new String(nodeID, StandardCharsets.UTF_8));
+        Log.debug("Removing orphaned occupants associated with defunct node: {}", new String(nodeID, StandardCharsets.UTF_8));
 
         for (MultiUserChatService service : getMultiUserChatServices()) {
             for (MUCRoom mucRoom : service.getChatRooms()) {

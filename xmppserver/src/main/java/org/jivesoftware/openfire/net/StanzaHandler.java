@@ -23,13 +23,14 @@ import org.jivesoftware.openfire.PacketRouter;
 import org.jivesoftware.openfire.StreamIDFactory;
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.auth.UnauthorizedException;
-import org.jivesoftware.openfire.http.FlashCrossDomainServlet;
+import org.jivesoftware.openfire.disco.IQDiscoInfoHandler;
 import org.jivesoftware.openfire.session.LocalSession;
 import org.jivesoftware.openfire.session.Session;
 import org.jivesoftware.openfire.spi.BasicStreamIDFactory;
 import org.jivesoftware.openfire.streammanagement.StreamManager;
 import org.jivesoftware.util.JiveGlobals;
 import org.jivesoftware.util.LocaleUtils;
+import org.jivesoftware.util.SystemProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xmlpull.v1.XmlPullParser;
@@ -38,6 +39,7 @@ import org.xmpp.packet.*;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.util.List;
 
 /**
  * A StanzaHandler is the main responsible for handling incoming stanzas. Some stanzas like startTLS
@@ -48,6 +50,12 @@ import java.io.StringReader;
 public abstract class StanzaHandler {
 
     private static final Logger Log = LoggerFactory.getLogger(StanzaHandler.class);
+
+    public static final SystemProperty<Boolean> PROPERTY_OVERWRITE_EMPTY_TO = SystemProperty.Builder.ofType( Boolean.class )
+        .setKey( "xmpp.server.rewrite.replace-missing-to" )
+        .setDefaultValue( true )
+        .setDynamic( true )
+        .build();
 
     /**
      * A factory that generates random stream IDs
@@ -109,22 +117,11 @@ public abstract class StanzaHandler {
     }
 
     public void process(String stanza, XMPPPacketReader reader) throws Exception {
-
-        boolean initialStream = stanza.startsWith("<stream:stream") || stanza.startsWith("<flash:stream");
+        boolean initialStream = stanza.startsWith("<stream:stream");
         if (!sessionCreated || initialStream) {
             if (!initialStream) {
-                // Allow requests for flash socket policy files directly on the client listener port
-                if (stanza.startsWith("<policy-file-request/>")) {
-                    String crossDomainText = FlashCrossDomainServlet.CROSS_DOMAIN_TEXT +
-                            XMPPServer.getInstance().getConnectionManager().getClientListenerPort() +
-                            FlashCrossDomainServlet.CROSS_DOMAIN_END_TEXT + '\0';
-                    connection.deliverRawText(crossDomainText);
-                    return;
-                }
-                else {
-                    // Ignore <?xml version="1.0"?>
-                    return;
-                }
+                // Ignore <?xml version="1.0"?>
+                return;
             }
             // Found an stream:stream tag...
             if (!sessionCreated) {
@@ -325,6 +322,22 @@ public abstract class StanzaHandler {
         Element query = doc.element("query");
         if (query != null && "jabber:iq:roster".equals(query.getNamespaceURI())) {
             return new Roster(doc);
+        }else if (query != null && "jabber:iq:version".equals(query.getNamespaceURI())) {
+            try {
+                List<Element> elements =  query.elements();
+                if (elements.size() >0){
+                    for (Element element : elements){
+                        session.setSoftwareVersionData(element.getName(), element.getStringValue());
+                    }
+                }    
+            } catch (Exception e) {
+                Log.error(e.getMessage(), e);
+            }
+            return new IQ(doc, !validateJIDs());
+        }else if(query != null && "http://jabber.org/protocol/disco#info".equals(query.getNamespaceURI())){
+            //XEP-0232 if responses service discovery can include detailed information about the software application
+            IQDiscoInfoHandler.setSoftwareVersionDataFormFromDiscoInfo(query, session);
+            return new IQ(doc, !validateJIDs());
         }
         else {
             return new IQ(doc, !validateJIDs());
@@ -344,7 +357,15 @@ public abstract class StanzaHandler {
      * @throws org.jivesoftware.openfire.auth.UnauthorizedException
      *          if service is not available to sender.
      */
-    protected void processIQ(IQ packet) throws UnauthorizedException {
+    protected void processIQ(IQ packet) throws UnauthorizedException
+    {
+        // If the 'to' attribute is null, treat the IQ on behalf of the entity from which the IQ stanza originated
+        // in accordance with RFC 6120 § 10.3.3. See https://tools.ietf.org/html/rfc6120#section-10.3.3:
+        // > […] responding as if the server were the bare JID of the sending entity.
+        if ( packet.getTo() == null && PROPERTY_OVERWRITE_EMPTY_TO.getValue() ) {
+            packet.setTo( packet.getFrom().asBareJID() );
+        }
+
         router.route(packet);
         session.incrementClientPacketCount();
     }
@@ -381,6 +402,12 @@ public abstract class StanzaHandler {
      *          if service is not available to sender.
      */
     protected void processMessage(Message packet) throws UnauthorizedException {
+        // If the 'to' attribute is null, treat the IQ on behalf of the entity from which the IQ stanza originated
+        // in accordance with RFC 6120 § 10.3.1. See https://tools.ietf.org/html/rfc6120#section-10.3.1:
+        // > […] treat the message as if the 'to' address were the bare JID <localpart@domainpart> of the sending entity.
+        if ( packet.getTo() == null && PROPERTY_OVERWRITE_EMPTY_TO.getValue() ) {
+            packet.setTo( packet.getFrom().asBareJID() );
+        }
         router.route(packet);
         session.incrementClientPacketCount();
     }
@@ -569,13 +596,7 @@ public abstract class StanzaHandler {
         sb.append("<?xml version='1.0' encoding='");
         sb.append(CHARSET);
         sb.append("'?>");
-        if (connection.isFlashClient()) {
-            sb.append("<flash:stream xmlns:flash=\"http://www.jabber.com/streams/flash\" ");
-        }
-        else {
-            sb.append("<stream:stream ");
-        }
-        sb.append("xmlns:stream=\"http://etherx.jabber.org/streams\" xmlns=\"");
+        sb.append("<stream:stream xmlns:stream=\"http://etherx.jabber.org/streams\" xmlns=\"");
         sb.append(getNamespace());
         sb.append("\" from=\"");
         sb.append(XMPPServer.getInstance().getServerInfo().getXMPPDomain());
@@ -613,6 +634,9 @@ public abstract class StanzaHandler {
      * If the connection remains open, the XPP will be set to be ready for the
      * first packet. A call to next() should result in an START_TAG state with
      * the first packet in the stream.
+     * @param xpp the pull parser
+     * @throws XmlPullParserException if an exception occurs reading from the pull parser
+     * @throws IOException if an IO exception occurs reading from the pull parser
      */
     protected void createSession(XmlPullParser xpp) throws XmlPullParserException, IOException {
         for (int eventType = xpp.getEventType(); eventType != XmlPullParser.START_TAG;) {
@@ -633,7 +657,7 @@ public abstract class StanzaHandler {
                     ". Connection: " + connection);
         }
         // Validate the stream namespace
-        else if (!"http://etherx.jabber.org/streams".equals(xpp.getNamespace()) && !"http://www.jabber.com/streams/flash".equals(xpp.getNamespace())) {
+        else if (!"http://etherx.jabber.org/streams".equals(xpp.getNamespace())) {
             // Include the invalid-namespace in the response
             streamError = new StreamError(StreamError.Condition.invalid_namespace);
             // Log a warning so that admins can track this cases from the server side
@@ -694,7 +718,7 @@ public abstract class StanzaHandler {
      *
      * Note that the value that is returned for this method can
      * change over time. For example, if no session has been established yet,
-     * this method will return <tt>null</tt>, or, if resource binding occurs,
+     * this method will return {@code null}, or, if resource binding occurs,
      * the returned value might change. Values obtained from this method are
      * therefore best <em>not</em> cached.
      *
@@ -740,7 +764,7 @@ public abstract class StanzaHandler {
      *
      * @param namespace the namespace sent in the stream element. eg. jabber:client.
      * @return the created session or null.
-     * @throws org.xmlpull.v1.XmlPullParserException
+     * @throws org.xmlpull.v1.XmlPullParserException when XML parsing causes an error.
      *
      */
     abstract boolean createSession(String namespace, String serverName, XmlPullParser xpp, Connection connection)

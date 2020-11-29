@@ -150,6 +150,8 @@ public class LocalComponentSession extends LocalSession implements ComponentSess
 
         // Create a ComponentSession for the external component
         LocalComponentSession session = SessionManager.getInstance().createComponentSession(componentJID, connection);
+        connection.registerCloseListener( handback -> SessionManager.getInstance().removeComponentSession( (LocalComponentSession) handback ), session );
+
         session.component = new LocalExternalComponent(session, connection);
 
         try {
@@ -241,6 +243,7 @@ public class LocalComponentSession extends LocalSession implements ComponentSess
             ExternalComponent component = getExternalComponent();
             try {
                 InternalComponentManager.getInstance().addComponent(defaultSubdomain, component);
+                conn.registerCloseListener( handback -> InternalComponentManager.getInstance().removeComponent( defaultSubdomain, (ExternalComponent) handback ), component );
                 Log.debug(
                         "LocalComponentSession: [ExComp] External component was registered SUCCESSFULLY with domain: " +
                                 defaultSubdomain);
@@ -422,5 +425,28 @@ public class LocalComponentSession extends LocalSession implements ComponentSess
                 iqs.put(iq.getID(), this);
             }
         }
+        /**
+         * @return the session
+         */
+        public LocalComponentSession getSession() {
+            return session;
+        }
+    }
+
+    @Override
+    public String toString()
+    {
+        return this.getClass().getSimpleName() +"{" +
+            "address=" + getAddress() +
+            ", streamID=" + getStreamID() +
+            ", status=" + getStatus() +
+            (getStatus() == STATUS_AUTHENTICATED ? " (authenticated)" : "" ) +
+            (getStatus() == STATUS_CONNECTED ? " (connected)" : "" ) +
+            (getStatus() == STATUS_CLOSED ? " (closed)" : "" ) +
+            ", isSecure=" + isSecure() +
+            ", isDetached=" + isDetached() +
+            ", serverName='" + getServerName() + '\'' +
+            ", defaultSubdomain='" + defaultSubdomain + '\'' +
+            '}';
     }
 }

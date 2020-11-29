@@ -24,6 +24,8 @@ URL: https://igniterealtime.org/projects/openfire/
 # couldn't find another way to disable the brp-java-repack-jars which was called in __os_install_post
 %define __os_install_post %{nil}
 %define debug_package %{nil}
+# libshaj.so is included in the noarch build, so we disable the error about this
+%define _binaries_in_noarch_packages_terminate_build 0
 
 %description
 Openfire is a leading Open Source, cross-platform IM server based on the
@@ -57,8 +59,6 @@ chmod 755 $RPM_BUILD_ROOT%{homedir}/bin/openfire.sh
 # Set up the sysconfig file.
 mkdir -p $RPM_BUILD_ROOT/etc/sysconfig
 cp $RPM_BUILD_ROOT%{homedir}/bin/extra/redhat/openfire-sysconfig $RPM_BUILD_ROOT/etc/sysconfig/openfire
-# Copy over the documentation
-cp -R documentation $RPM_BUILD_ROOT%{homedir}/documentation
 cp changelog.html $RPM_BUILD_ROOT%{homedir}/
 cp LICENSE.html $RPM_BUILD_ROOT%{homedir}/
 cp README.html $RPM_BUILD_ROOT%{homedir}/
@@ -74,6 +74,7 @@ rm -f $RPM_BUILD_ROOT%{homedir}/bin/*.bat
 rm -rf $RPM_BUILD_ROOT%{homedir}/resources/nativeAuth/osx-ppc
 rm -rf $RPM_BUILD_ROOT%{homedir}/resources/nativeAuth/win32-x86
 rm -f $RPM_BUILD_ROOT%{homedir}/lib/*.dll
+rm -f $RPM_BUILD_ROOT%{homedir}/conf/openfire-demoboot.xml
 
 %clean
 rm -rf $RPM_BUILD_ROOT

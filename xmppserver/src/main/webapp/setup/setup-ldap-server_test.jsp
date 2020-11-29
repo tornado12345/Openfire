@@ -2,6 +2,8 @@
 <%@ page import="org.jivesoftware.util.LocaleUtils" %>
 <%@ page import="org.jivesoftware.openfire.ldap.LdapManager, javax.naming.*, javax.naming.ldap.LdapContext, java.net.UnknownHostException" %>
 <%@ page import="java.util.Map" %>
+<%@ page import="java.io.PrintWriter" %>
+<%@ page import="java.io.StringWriter" %>
 
 <%@ taglib uri="http://java.sun.com/jsp/jstl/core" prefix="c" %>
 <%@ taglib uri="http://java.sun.com/jsp/jstl/fmt" prefix="fmt" %>
@@ -11,6 +13,7 @@
     String errorDetail = "";
     Map<String, String> settings = (Map<String, String>) session.getAttribute("ldapSettings");
     if (settings != null) {
+        settings.computeIfAbsent( "ldap.adminPassword", (key) -> LdapManager.getInstance().getAdminPassword() );
         LdapManager manager = new LdapManager(settings);
         LdapContext context = null;
         try {
@@ -42,6 +45,13 @@
             else {
                 errorDetail = e.getExplanation();
             }
+            // Store stacktrace as attribute.
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            e.printStackTrace(pw);
+            pageContext.setAttribute( "stacktrace", sw.toString() );
+
+            // Print stacktrace to std-out.
             e.printStackTrace();
         }
         finally {
@@ -54,10 +64,13 @@
             }
         }
     }
+
+    pageContext.setAttribute( "success", success );
+    pageContext.setAttribute( "errorDetail", errorDetail );
 %>
     <!-- BEGIN connection settings test panel -->
     <div class="jive-testPanel">
-        <div class="jive-testPanel-content">
+        <div class="jive-testPanel-content" style="min-width: 600px;">
         
             <div align="right" class="jive-testPanel-close">
                 <a href="#" class="lbAction" rel="deactivate"><fmt:message key="setup.ldap.server.test.close" /></a>
@@ -65,15 +78,21 @@
             
             
             <h2><fmt:message key="setup.ldap.server.test.title" />: <span><fmt:message key="setup.ldap.server.test.title-desc" /></span></h2>
-            <% if (success) { %>
-            <h4 class="jive-testSuccess"><fmt:message key="setup.ldap.server.test.status-success" /></h4>
+            <c:choose>
+                <c:when test="${success}">
+                    <h4 class="jive-testSuccess"><fmt:message key="setup.ldap.server.test.status-success" /></h4>
+                    <p><fmt:message key="setup.ldap.server.test.status-success.detail" /></p>
+                </c:when>
+                <c:otherwise>
+                    <h4 class="jive-testError"><fmt:message key="setup.ldap.server.test.status-error" /></h4>
+                    <p><c:out value="${errorDetail}"/></p>
+                    <c:if test="${not empty stacktrace}">
+                        <h3 style="margin: 8px 0 3px;"><fmt:message key="setup.ldap.server.test.stacktrace" />:</h3>
+                        <p><textarea style="width: 100%; max-width: 100%; height: 160px; font-size: smaller"><c:out value="${stacktrace}"/></textarea></p>
+                    </c:if>
+                </c:otherwise>
+            </c:choose>
 
-            <p><fmt:message key="setup.ldap.server.test.status-success.detail" /></p>
-            <% } else { %>
-            <h4 class="jive-testError"><fmt:message key="setup.ldap.server.test.status-error" /></h4>
-            <p><%= errorDetail %></p>
-            <% } %>
-            
         </div>
     </div>
     <!-- END connection settings test panel -->

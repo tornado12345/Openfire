@@ -16,6 +16,7 @@
 
 package org.jivesoftware.database;
 
+import java.io.File;
 import java.io.Reader;
 import java.io.StringReader;
 import java.io.StringWriter;
@@ -27,6 +28,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.MissingResourceException;
 
 import org.jivesoftware.util.ClassUtils;
@@ -110,6 +112,45 @@ public class DbConnectionManager {
     }
 
     /**
+     * Attempts to create a connection to the database and execute a query.
+     *
+     * @param errors A map populated with errors if they occur.
+     * @return true if the test was successful, otherwise false.
+     */
+    public static boolean testConnection( Map<String,String> errors ) {
+        boolean success = true;
+        try ( final Connection con = DbConnectionManager.getConnection() )
+        {
+            // See if the Jive db schema is installed.
+            try
+            {
+                Statement stmt = con.createStatement();
+                // Pick an arbitrary table to see if it's there.
+                stmt.executeQuery( "SELECT * FROM ofID" );
+                stmt.close();
+            }
+            catch ( SQLException sqle )
+            {
+                success = false;
+                Log.error( "The Openfire database schema does not appear to be installed.", sqle );
+                errors.put( "general", "The Openfire database schema does not "
+                    + "appear to be installed. Follow the installation guide to "
+                    + "fix this error." );
+            }
+        }
+        catch ( SQLException exception )
+        {
+            success = false;
+            Log.error( "Unable to connect to the database.", exception );
+            errors.put( "general", "A connection to the database could not be "
+                + "made. View the error message by opening the "
+                + "\"" + File.separator + "logs" + File.separator + "error.log\" log "
+                + "file, then go back to fix the problem." );
+        }
+        return success;
+    }
+
+    /**
      * Returns a database connection from the currently active connection
      * provider. An exception will be thrown if no connection was found.
      * (auto commit is set to true).
@@ -124,6 +165,7 @@ public class DbConnectionManager {
         Integer maxRetries = JiveGlobals.getXMLProperty(SETTING_DATABASE_MAX_RETRIES, 10);
         Integer retryWait = JiveGlobals.getXMLProperty(SETTING_DATABASE_RETRY_DELAY, 250); // milliseconds
         SQLException lastException = null;
+        boolean loopIfNoConnection = false;
         do {
             try {
                 Connection con = connectionProvider.getConnection();
@@ -145,13 +187,19 @@ public class DbConnectionManager {
                         "(attempt " + currentRetryCount + " out of " + maxRetries + ").", e);
             }
             
-            try {
-                Thread.sleep(retryWait);
-            } catch (Exception e) {
-                // Ignored, the thread was interrupted while waiting, so no need to log either
-            }
             currentRetryCount++;
-        } while (currentRetryCount <= maxRetries);
+            loopIfNoConnection = currentRetryCount <= maxRetries;
+            if (loopIfNoConnection) {
+                try {
+                    Thread.sleep(retryWait);
+                } catch (InterruptedException ex) {
+                    String msg = "Interrupted waiting for DB connection";
+                    Log.info(msg,ex);
+                    Thread.currentThread().interrupt();
+                    throw new SQLException(msg,ex);
+                }
+            }
+        } while (loopIfNoConnection);
         
         throw new SQLException("ConnectionManager.getConnection() " +
                 "failed to obtain a connection after " + currentRetryCount + " retries. " +
@@ -308,6 +356,7 @@ public class DbConnectionManager {
      *      }
      * } </pre>
      *
+     * @param rs the result set to close
      * @param stmt the statement.
      */
     public static void closeStatement(ResultSet rs, Statement stmt) {
@@ -335,6 +384,7 @@ public class DbConnectionManager {
      * } </pre>
      *
      * @param pstmt the statement to close.
+     * @throws SQLException if an exception occurs closing the statement
      */
     public static void fastcloseStmt(PreparedStatement pstmt) throws SQLException
     {
@@ -361,7 +411,9 @@ public class DbConnectionManager {
      *      ...
      * } </pre>
      *
+     * @param rs The result set to close
      * @param pstmt the statement to close.
+     * @throws SQLException if an exception occurs closing the result set or statement
      */
     public static void fastcloseStmt(ResultSet rs, PreparedStatement pstmt) throws SQLException
     {
@@ -482,7 +534,7 @@ public class DbConnectionManager {
     /**
      * Scrolls forward in a result set the specified number of rows. If the JDBC driver
      * supports the feature, the cursor will be moved directly. Otherwise, we scroll
-     * through results one by one manually by calling <tt>rs.next()</tt>.
+     * through results one by one manually by calling {@code rs.next()}.
      *
      * @param rs the ResultSet object to scroll.
      * @param rowNumber the row number to scroll forward to.
@@ -621,7 +673,7 @@ public class DbConnectionManager {
 
     /**
      * Destroys the currennt connection provider. Future calls to
-     * {@link #getConnectionProvider()} will return <tt>null</tt> until a new
+     * {@link #getConnectionProvider()} will return {@code null} until a new
      * ConnectionProvider is set, or one is automatically loaded by a call to
      * {@link #getConnection()}.
      */

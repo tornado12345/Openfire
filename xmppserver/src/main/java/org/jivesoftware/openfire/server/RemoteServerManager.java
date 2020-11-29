@@ -25,6 +25,7 @@ import java.util.Collection;
 import org.jivesoftware.database.DbConnectionManager;
 import org.jivesoftware.openfire.ConnectionManager;
 import org.jivesoftware.openfire.SessionManager;
+import org.jivesoftware.openfire.event.ServerSessionEventDispatcher;
 import org.jivesoftware.openfire.server.RemoteServerConfiguration.Permission;
 import org.jivesoftware.openfire.session.ConnectionSettings;
 import org.jivesoftware.openfire.session.DomainPair;
@@ -160,7 +161,7 @@ public class RemoteServerManager {
     /**
      * Returns the number of milliseconds to wait to connect to a remote server or read
      * data from a remote server. Default timeout value is 120 seconds. Configure the
-     * <tt>xmpp.server.read.timeout</tt> global property to override the default value.
+     * {@code xmpp.server.read.timeout} global property to override the default value.
      *
      * @return the number of milliseconds to wait to connect to a remote server or read
      *         data from a remote server.
@@ -223,10 +224,10 @@ public class RemoteServerManager {
     }
 
     /**
-     * Returns the configuration for a remote server or <tt>null</tt> if none was found.
+     * Returns the configuration for a remote server or {@code null} if none was found.
      *
      * @param domain the domain of the remote server.
-     * @return the configuration for a remote server or <tt>null</tt> if none was found.
+     * @return the configuration for a remote server or {@code null} if none was found.
      */
     public static RemoteServerConfiguration getConfiguration(String domain) {
         Object value = configurationsCache.get(domain);
@@ -360,6 +361,8 @@ public class RemoteServerManager {
                 Session session = SessionManager.getInstance().getOutgoingServerSession(domainPair);
                 Log.debug( "Closing session as a changed permission policy is taken into effect. Affected session: {}", session );
                 session.close();
+                // After the session has been close, inform all listeners as well.
+                ServerSessionEventDispatcher.dispatchEvent(session, ServerSessionEventDispatcher.EventType.session_destroyed);
             }
         }
     }

@@ -16,35 +16,32 @@
 
 package org.jivesoftware.openfire.pubsub;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 
 import org.dom4j.Element;
 import org.jivesoftware.openfire.SessionManager;
+import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.cluster.ClusterManager;
-import org.jivesoftware.openfire.pubsub.cluster.AffiliationTask;
-import org.jivesoftware.openfire.pubsub.cluster.CancelSubscriptionTask;
-import org.jivesoftware.openfire.pubsub.cluster.ModifySubscriptionTask;
-import org.jivesoftware.openfire.pubsub.cluster.NewSubscriptionTask;
-import org.jivesoftware.openfire.pubsub.cluster.RemoveNodeTask;
+import org.jivesoftware.openfire.pep.PEPServiceManager;
+import org.jivesoftware.openfire.pubsub.cluster.*;
 import org.jivesoftware.openfire.pubsub.models.AccessModel;
 import org.jivesoftware.openfire.pubsub.models.PublisherModel;
 import org.jivesoftware.util.LocaleUtils;
 import org.jivesoftware.util.StringUtils;
-import org.jivesoftware.util.cache.CacheFactory;
+import org.jivesoftware.util.cache.*;
 import org.xmpp.forms.DataForm;
 import org.xmpp.forms.FormField;
 import org.xmpp.packet.IQ;
 import org.xmpp.packet.JID;
 import org.xmpp.packet.Message;
+import org.xmpp.packet.PacketError;
 
 import static org.jivesoftware.openfire.muc.spi.IQOwnerHandler.parseFirstValueAsBoolean;
+
+import java.io.*;
 
 /**
  * A virtual location to which information can be published and from which event
@@ -53,16 +50,16 @@ import static org.jivesoftware.openfire.muc.spi.IQOwnerHandler.parseFirstValueAs
  *
  * @author Matt Tucker
  */
-public abstract class Node {
+public abstract class Node implements Cacheable, Externalizable {
 
     /**
-     * Reference to the publish and subscribe service.
+     * Unique reference to the publish and subscribe service.
      */
-    protected PubSubService service;
+    protected PubSubService.UniqueIdentifier serviceIdentifier;
     /**
-     * Keeps the Node that is containing this node.
+     * The ID of the node that is containing this node (if any). This node can be expected to be a CollectionNode.
      */
-    protected CollectionNode parent;
+    protected Node.UniqueIdentifier parentIdentifier;
     /**
      * The unique identifier for a node within the context of a pubsub service.
      */
@@ -189,27 +186,51 @@ public abstract class Node {
     protected Map<String, NodeSubscription> subscriptionsByJID =
             new ConcurrentHashMap<>();
 
-    Node(PubSubService service, CollectionNode parent, String nodeID, JID creator) {
-        this.service = service;
-        this.parent = parent;
+    /**
+     * A transient reference to the service that this node belongs to. Note that this value is lazily initialized in
+     * {@link #getService()}. That method should be used instead of accessing this field directly.
+     */
+    private transient PubSubService service;
+
+    /**
+     * A transient reference to the node that is the parent of this node. Note that this value is lazily initialized in
+     * {@link #getParent()}. That method should be used instead of accessing this field directly.
+     */
+    private transient CollectionNode parent;
+
+    Node() {} // to be used only for serialization;
+
+    Node(PubSubService.UniqueIdentifier serviceId, CollectionNode parent, String nodeID, JID creator, DefaultNodeConfiguration configuration ) {
+        this(serviceId, parent, nodeID, creator, configuration.isSubscriptionEnabled(), configuration.isDeliverPayloads(), configuration.isNotifyConfigChanges(), configuration.isNotifyDelete(), configuration.isNotifyRetract(), configuration.isPresenceBasedDelivery(), configuration.getAccessModel(), configuration.getPublisherModel(), configuration.getLanguage(), configuration.getReplyPolicy() );
+    }
+
+    Node(PubSubService.UniqueIdentifier serviceId, CollectionNode parent, String nodeID, JID creator, boolean subscriptionEnabled, boolean deliverPayloads, boolean notifyConfigChanges, boolean notifyDelete, boolean notifyRetract, boolean presenceBasedDelivery, AccessModel accessModel, PublisherModel publisherModel, String language, ItemReplyPolicy replyPolicy) {
+        this.serviceIdentifier = serviceId;
+        this.parentIdentifier = parent == null ? null : parent.getUniqueIdentifier();
         this.nodeID = nodeID;
         this.creator = creator;
         long startTime = System.currentTimeMillis();
         this.creationDate = new Date(startTime);
         this.modificationDate = new Date(startTime);
-        // Configure node with default values (get them from the pubsub service)
-        DefaultNodeConfiguration defaultConfiguration =
-                service.getDefaultNodeConfiguration(!isCollectionNode());
-        this.subscriptionEnabled = defaultConfiguration.isSubscriptionEnabled();
-        this.deliverPayloads = defaultConfiguration.isDeliverPayloads();
-        this.notifyConfigChanges = defaultConfiguration.isNotifyConfigChanges();
-        this.notifyDelete = defaultConfiguration.isNotifyDelete();
-        this.notifyRetract = defaultConfiguration.isNotifyRetract();
-        this.presenceBasedDelivery = defaultConfiguration.isPresenceBasedDelivery();
-        this.accessModel = defaultConfiguration.getAccessModel();
-        this.publisherModel = defaultConfiguration.getPublisherModel();
-        this.language = defaultConfiguration.getLanguage();
-        this.replyPolicy = defaultConfiguration.getReplyPolicy();
+        this.subscriptionEnabled = subscriptionEnabled;
+        this.deliverPayloads = deliverPayloads;
+        this.notifyConfigChanges = notifyConfigChanges;
+        this.notifyDelete = notifyDelete;
+        this.notifyRetract = notifyRetract;
+        this.presenceBasedDelivery = presenceBasedDelivery;
+        this.accessModel = accessModel;
+        this.publisherModel = publisherModel;
+        this.language = language;
+        this.replyPolicy = replyPolicy;
+    }
+
+    /**
+     * Returns an identifier for this node that is unique within the XMPP domain.
+     *
+     * @return A unique identifier for this node.
+     */
+    public UniqueIdentifier getUniqueIdentifier() {
+        return new UniqueIdentifier( this.serviceIdentifier, this.nodeID );
     }
 
     /**
@@ -338,7 +359,12 @@ public abstract class Node {
 
         if (savedToDB) {
             // Add or update the affiliate in the database
-            PubSubPersistenceManager.saveAffiliation(this, affiliate, created);
+            final PubSubPersistenceProvider persistenceProvider = XMPPServer.getInstance().getPubSubModule().getPersistenceProvider();
+            if ( created ) {
+                persistenceProvider.createAffiliation(this, affiliate);
+            } else {
+                persistenceProvider.updateAffiliation(this, affiliate);
+            }
         }
         
         // Update the other members with the new affiliation
@@ -361,7 +387,7 @@ public abstract class Node {
         affiliates.remove(affiliate);
         if (savedToDB) {
             // Remove the affiliate from the database
-            PubSubPersistenceManager.removeAffiliation(this, affiliate);
+            XMPPServer.getInstance().getPubSubModule().getPersistenceProvider().removeAffiliation(this, affiliate);
         }
     }
 
@@ -406,7 +432,7 @@ public abstract class Node {
 
     /**
      * Returns all subscriptions to the node. If multiple subscriptions are enabled,
-     * this method returns the subscriptions by <tt>subId</tt>, otherwise it returns
+     * this method returns the subscriptions by {@code subId}, otherwise it returns
      * the subscriptions by {@link JID}.
      *
      * @return All subscriptions to the node.
@@ -430,12 +456,12 @@ public abstract class Node {
     }
 
     /**
-     * Returns the {@link NodeAffiliate} of the specified {@link JID} or <tt>null</tt>
+     * Returns the {@link NodeAffiliate} of the specified {@link JID} or {@code null}
      * if none was found. Users that have a subscription with the node will ALWAYS
-     * have an affiliation even if the affiliation is of type <tt>none</tt>.
+     * have an affiliation even if the affiliation is of type {@code none}.
      *
      * @param jid the JID of the user to look his affiliation with this node.
-     * @return the NodeAffiliate of the specified JID or <tt>null</tt> if none was found.
+     * @return the NodeAffiliate of the specified JID or {@code null} if none was found.
      */
     public NodeAffiliate getAffiliate(JID jid) {
         for (NodeAffiliate affiliate : affiliates) {
@@ -636,13 +662,13 @@ public abstract class Node {
                     // Set the parent collection node
                     values = field.getValues();
                     String newParent = values.size() > 0 ? values.get(0) : " ";
-                    Node newParentNode = service.getNode(newParent);
+                    Node newParentNode = getService().getNode(newParent);
 
                     if (!(newParentNode instanceof CollectionNode))
                     {
                         throw new NotAcceptableException("Specified node in field pubsub#collection [" + newParent + "] " + ((newParentNode == null) ? "does not exist" : "is not a collection node"));
                     }
-                    changeParent((CollectionNode) newParentNode);
+                    changeParent((CollectionNode)newParentNode);
                 }
                 else {
                     // Let subclasses be configured by specified fields
@@ -759,6 +785,12 @@ public abstract class Node {
         }
         // Send notification that the node configuration has changed
         broadcastNodeEvent(message, false);
+
+        // And also to the subscribers of parent nodes with proper subscription depth
+        final CollectionNode parent = getParent();
+        if (parent != null){
+            parent.childNodeModified(this, message);
+        }
     }
 
     /**
@@ -788,7 +820,7 @@ public abstract class Node {
         formField.setVariable("pubsub#node");
         formField.setType(FormField.Type.text_single);
         formField.setLabel(LocaleUtils.getLocalizedString("pubsub.form.authorization.node"));
-        formField.addValue(getNodeID());
+        formField.addValue(nodeID);
 
         formField = form.addField();
         formField.setVariable("pubsub#subscriber_jid");
@@ -815,7 +847,7 @@ public abstract class Node {
         DataForm form = new DataForm(DataForm.Type.form);
         form.setTitle(LocaleUtils.getLocalizedString("pubsub.form.conf.title"));
         List<String> params = new ArrayList<>();
-        params.add(getNodeID());
+        params.add(nodeID);
         form.addInstruction(LocaleUtils.getLocalizedString("pubsub.form.conf.instruction", params));
 
         FormField formField = form.addField();
@@ -868,8 +900,9 @@ public abstract class Node {
             formField.setLabel(LocaleUtils.getLocalizedString("pubsub.form.conf.collection"));
         }
 
+        final CollectionNode parent = getParent();
         if (parent != null && !parent.isRootCollectionNode()) {
-            formField.addValue(parent.getNodeID());
+            formField.addValue(parent.getUniqueIdentifier().getNodeId());
         }
 
         formField = form.addField();
@@ -1101,19 +1134,19 @@ public abstract class Node {
      * @return true if this node is the root node of the pubsub service.
      */
     public boolean isRootCollectionNode() {
-        return service.getRootCollectionNode() == this;
+        return getService().getRootCollectionNode() == this;
     }
 
     /**
      * Returns true if a user may have more than one subscription with the node. When
      * multiple subscriptions is enabled each subscription request, event notification and
-     * unsubscription request should include a <tt>subid</tt> attribute. By default multiple
+     * unsubscription request should include a {@code subid} attribute. By default multiple
      * subscriptions is enabled.
      *
      * @return true if a user may have more than one subscription with the node.
      */
     public boolean isMultipleSubscriptionsEnabled() {
-        return service.isMultipleSubscriptionsEnabled();
+        return getService().isMultipleSubscriptionsEnabled();
     }
 
     /**
@@ -1159,7 +1192,7 @@ public abstract class Node {
      * @return true if the specified user is allowed to administer the node.
      */
     public boolean isAdmin(JID user) {
-        if (getOwners().contains(user) || service.isServiceAdmin(user)) {
+        if (getOwners().contains(user) || getService().isServiceAdmin(user)) {
             return true;
         }
         // Check if we should try again but using the bare JID
@@ -1175,14 +1208,27 @@ public abstract class Node {
      *
      * @return the pubsub service.
      */
-    public PubSubService getService() {
+    public PubSubService getService()
+    {
+        if ( service == null ) {
+            if (getUniqueIdentifier().getServiceIdentifier().equals( XMPPServer.getInstance().getPubSubModule().getUniqueIdentifier() ) ) {
+                service = XMPPServer.getInstance().getPubSubModule();
+            } else {
+                final PEPServiceManager serviceMgr = XMPPServer.getInstance().getIQPEPHandler().getServiceManager();
+                service = serviceMgr.getPEPService(getUniqueIdentifier().getServiceIdentifier(), false);
+            }
+        }
         return service;
     }
 
     /**
-     * Returns the unique identifier for a node within the context of a pubsub service.
+     * Returns the string representation of the unique identifier for a node within the context of a pubsub service.
+     *
+     * Preferably, use #getUniqueIdentifier() instead of this method, as that gives a more type-safe value than the
+     * String instance that's returned by this method.
      *
      * @return the unique identifier for a node within the context of a pubsub service.
+     * @see #getUniqueIdentifier()
      */
     public String getNodeID() {
         return nodeID;
@@ -1512,6 +1558,21 @@ public abstract class Node {
      * @return the collection node that is containing this node.
      */
     public CollectionNode getParent() {
+        if ( parentIdentifier == null ) {
+            return null;
+        }
+        if ( parent == null )
+        {
+            PubSubService service = getService();
+            if ( service.getRootCollectionNode() != null && service.getRootCollectionNode().getUniqueIdentifier().equals(parentIdentifier) )
+            {
+                parent = service.getRootCollectionNode();
+            }
+            else
+            {
+                parent = (CollectionNode) service.getNode(parentIdentifier.getNodeId());
+            }
+        }
         return parent;
     }
 
@@ -1522,7 +1583,7 @@ public abstract class Node {
      */
     public Collection<CollectionNode> getParents() {
         Collection<CollectionNode> parents = new ArrayList<>();
-        CollectionNode myParent = parent;
+        CollectionNode myParent = getParent();
         while (myParent != null) {
             parents.add(myParent);
             myParent = myParent.getParent();
@@ -1673,9 +1734,9 @@ public abstract class Node {
 
     void setSavedToDB(boolean savedToDB) {
         this.savedToDB = savedToDB;
-        if (savedToDB && parent != null) {
+        if (savedToDB && parentIdentifier != null) {
             // Notify the parent that he has a new child :)
-            parent.addChildNode(this);
+            getParent().addChildNode(this);
         }
     }
 
@@ -1742,28 +1803,29 @@ public abstract class Node {
      * Saves the node configuration to the backend store.
      */
     public void saveToDB() {
-        // Make the room persistent
+        // Make the node persistent
+        final PubSubPersistenceProvider persistenceProvider = XMPPServer.getInstance().getPubSubModule().getPersistenceProvider();
         if (!savedToDB) {
-            PubSubPersistenceManager.createNode(this);
+            persistenceProvider.createNode(this);
             // Set that the node is now in the DB
             setSavedToDB(true);
             // Save the existing node affiliates to the DB
-            for (NodeAffiliate affialiate : affiliates) {
-                PubSubPersistenceManager.saveAffiliation(this, affialiate, true);
+            for (NodeAffiliate affiliate : affiliates) {
+                persistenceProvider.createAffiliation(this, affiliate);
             }
             // Add new subscriptions to the database
             for (NodeSubscription subscription : subscriptionsByID.values()) {
-                PubSubPersistenceManager.saveSubscription(this, subscription, true);
+                persistenceProvider.createSubscription(this, subscription);
             }
             // Add the new node to the list of available nodes
-            service.addNode(this);
+            getService().addNode(this);
             // Notify the parent (if any) that a new node has been added
-            if (parent != null) {
-                parent.childNodeAdded(this);
+            if (parentIdentifier != null) {
+                getParent().childNodeAdded(this);
             }
         }
         else {
-            PubSubPersistenceManager.updateNode(this);
+            persistenceProvider.updateNode(this);
         }
     }
 
@@ -1778,14 +1840,14 @@ public abstract class Node {
     }
 
     /**
-     * Returns the subscription whose subscription JID matches the specified JID or <tt>null</tt>
+     * Returns the subscription whose subscription JID matches the specified JID or {@code null}
      * if none was found. Accessing subscriptions by subscription JID and not by subscription ID
      * is only possible when the node does not allow multiple subscriptions from the same entity.
      * If the node allows multiple subscriptions and this message is sent then an
      * IllegalStateException exception is going to be thrown.
      *
      * @param subscriberJID the JID of the entity that receives event notifications.
-     * @return the subscription whose subscription JID matches the specified JID or <tt>null</tt>
+     * @return the subscription whose subscription JID matches the specified JID or {@code null}
      *         if none was found.
      * @throws IllegalStateException If this message was used when the node supports multiple
      *         subscriptions.
@@ -1800,14 +1862,14 @@ public abstract class Node {
     }
 
     /**
-     * Returns the subscription whose subscription ID matches the specified ID or <tt>null</tt>
+     * Returns the subscription whose subscription ID matches the specified ID or {@code null}
      * if none was found. Accessing subscriptions by subscription ID is always possible no matter
      * if the node allows one or multiple subscriptions for the same entity. Even when users can
      * only subscribe once to the node a subscription ID is going to be internally created though
      * never returned to the user.
      *
      * @param subscriptionID the ID of the subscription.
-     * @return the subscription whose subscription ID matches the specified ID or <tt>null</tt>
+     * @return the subscription whose subscription ID matches the specified ID or {@code null}
      *         if none was found.
      */
     public NodeSubscription getSubscription(String subscriptionID) {
@@ -1818,43 +1880,39 @@ public abstract class Node {
     /**
      * Deletes this node from memory and the database. Subscribers are going to be notified
      * that the node has been deleted after the node was successfully deleted.
-     *
-     * @return true if the node was successfully deleted.
      */
-    public boolean delete() {
+    public void delete() {
         // Delete node from the database
-        if (PubSubPersistenceManager.removeNode(this)) {
-            // Remove this node from the parent node (if any)
-            if (parent != null) {
-                parent.removeChildNode(this);
-            }
-            deletingNode();
-            // Broadcast delete notification to subscribers (if enabled)
-            if (isNotifiedOfDelete()) {
-                // Build packet to broadcast to subscribers
-                Message message = new Message();
-                Element event = message.addChildElement("event", "http://jabber.org/protocol/pubsub#event");
-                Element items = event.addElement("delete");
-                items.addAttribute("node", nodeID);
-                // Send notification that the node was deleted
-                broadcastNodeEvent(message, true);
-            }
-            // Notify the parent (if any) that the node has been removed from the parent node
-            if (parent != null) {
+        XMPPServer.getInstance().getPubSubModule().getPersistenceProvider().removeNode(this);
+        // Remove this node from the parent node (if any)
+        if (parentIdentifier != null) {
+            final CollectionNode parent = getParent();
+            // Notify the parent that the node has been removed from the parent node
+            if (isNotifiedOfDelete()){
                 parent.childNodeDeleted(this);
             }
-            // Remove presence subscription when node was deleted.
-            cancelPresenceSubscriptions();
-            // Remove the node from memory
-            service.removeNode(getNodeID());
-            CacheFactory.doClusterTask(new RemoveNodeTask(this));
-            // Clear collections in memory (clear them after broadcast was sent)
-            affiliates.clear();
-            subscriptionsByID.clear();
-            subscriptionsByJID.clear();
-            return true;
+            parent.removeChildNode(this);
         }
-        return false;
+        deletingNode();
+        // Broadcast delete notification to subscribers (if enabled)
+        if (isNotifiedOfDelete()) {
+            // Build packet to broadcast to subscribers
+            Message message = new Message();
+            Element event = message.addChildElement("event", "http://jabber.org/protocol/pubsub#event");
+            Element items = event.addElement("delete");
+            items.addAttribute("node", nodeID);
+            // Send notification that the node was deleted
+            broadcastNodeEvent(message, true);
+        }
+        // Remove presence subscription when node was deleted.
+        cancelPresenceSubscriptions();
+        // Remove the node from memory
+        getService().removeNode(nodeID);
+        CacheFactory.doClusterTask(new RemoveNodeTask(this));
+        // Clear collections in memory (clear them after broadcast was sent)
+        affiliates.clear();
+        subscriptionsByID.clear();
+        subscriptionsByJID.clear();
     }
 
     /**
@@ -1877,7 +1935,7 @@ public abstract class Node {
         if (parent == newParent) {
             return;
         }
-        
+
         if (parent != null) {
             // Remove this node from the current parent node
             parent.removeChildNode(this);
@@ -1889,7 +1947,7 @@ public abstract class Node {
             parent.addChildNode(this);
         }
         if (savedToDB) {
-            PubSubPersistenceManager.updateNode(this);
+            XMPPServer.getInstance().getPubSubModule().getPersistenceProvider().updateNode(this);
         }
     }
 
@@ -1902,7 +1960,7 @@ public abstract class Node {
         for (NodeAffiliate affiliate : affiliates) {
             if (affiliate.getAffiliation() != NodeAffiliate.Affiliation.outcast &&
                     (isPresenceBasedDelivery() || (!affiliate.getSubscriptions().isEmpty()))) {
-                service.presenceSubscriptionRequired(this, affiliate.getJID());
+                getService().presenceSubscriptionRequired(this, affiliate.getJID());
             }
         }
     }
@@ -1915,7 +1973,7 @@ public abstract class Node {
     private void cancelPresenceSubscriptions() {
         for (NodeSubscription subscription : getSubscriptions()) {
             if (isPresenceBasedDelivery() || !subscription.getPresenceStates().isEmpty()) {
-                service.presenceSubscriptionNotRequired(this, subscription.getOwner());
+                getService().presenceSubscriptionNotRequired(this, subscription.getOwner());
             }
         }
     }
@@ -1941,7 +1999,7 @@ public abstract class Node {
             entity.addAttribute("affiliation", affiliate.getAffiliation().name());
         }
         // Send reply
-        service.send(reply);
+        getService().send(reply);
     }
 
     /**
@@ -1971,7 +2029,7 @@ public abstract class Node {
             }
         }
         // Send reply
-        service.send(reply);
+        getService().send(reply);
     }
 
     /**
@@ -1989,7 +2047,7 @@ public abstract class Node {
             }
         }
         // Broadcast packet to subscribers
-        service.broadcast(this, message, jids);
+        getService().broadcast(this, message, jids);
     }
 
     /**
@@ -2014,12 +2072,12 @@ public abstract class Node {
             }
         }
         
-        // Verify that the subscriber JID is currently available to receive notification 
+        // Verify that the subscriber JID is currently available to receive notification
         // messages. This is required because the message router will deliver packets via 
         // the bare JID if a session for the full JID is not available. The "isActiveRoute"
         // condition below will prevent inadvertent delivery of multiple copies of each
         // event notification to the user, possibly multiple times (e.g. route.all-resources). 
-        // (Refer to http://issues.igniterealtime.org/browse/OF-14 for more info.)
+        // (Refer to https://igniterealtime.atlassian.net/browse/OF-14 for more info.)
         //
         // This approach is informed by the following XEP-0060 implementation guidelines:
         //   12.2 "Intended Recipients for Notifications" - only deliver to subscriber JID
@@ -2030,7 +2088,7 @@ public abstract class Node {
         //
         if (subscriberJID.getResource() == null ||
             SessionManager.getInstance().getSession(subscriberJID) != null) {
-            service.sendNotification(this, notification, subscriberJID);
+            getService().sendNotification(this, notification, subscriberJID);
         }
 
         if (headers != null) {
@@ -2045,7 +2103,7 @@ public abstract class Node {
      * to be authorized by a node owner to be active. If new subscriptions are required to be
      * configured before being active then the subscription state would be "unconfigured".<p>
      *
-     * The originalIQ parameter may be <tt>null</tt> when using this API internally. When no
+     * The originalIQ parameter may be {@code null} when using this API internally. When no
      * IQ packet was sent then no IQ result will be sent to the sender. The rest of the
      * functionality is the same.
      *
@@ -2082,11 +2140,29 @@ public abstract class Node {
         if (options != null) {
             subscription.configure(options);
         }
+
+        if ( subscription.isAuthorizationPending() ) {
+            final Set<NodeSubscription> existing = new HashSet<>();
+            existing.add( subscriptionsByJID.get( subscription.getJID().toString() ) ); // potentially null
+            existing.addAll( subscriptionsByID.values().stream().filter( s -> s.getJID().equals( subscription.getJID() ) ).collect( Collectors.toSet()) );
+            if (existing.stream().anyMatch( s -> s != null && s.isAuthorizationPending() ) ) {
+                // This node already has a pending subscription for this JID. The XEP forbids this.
+                if (originalIQ != null ) {
+                    final IQ response = IQ.createResultIQ( originalIQ );
+                    response.setError( PacketError.Condition.not_authorized );
+                    response.getError().getElement().addElement( "pending-subscription", "http://jabber.org/protocol/pubsub#errors" );
+                    getService().send( response );
+                }
+                // Silently ignore if this was an internal API call.
+                return;
+            }
+        }
+
         addSubscription(subscription);
 
         if (savedToDB) {
             // Add the new subscription to the database
-            PubSubPersistenceManager.saveSubscription(this, subscription, true);
+            XMPPServer.getInstance().getPubSubModule().getPersistenceProvider().createSubscription(this, subscription);
         }
 
         if (originalIQ != null) {
@@ -2118,14 +2194,14 @@ public abstract class Node {
                 // Subscribe to the owner's presence since the node is only sending events to
                 // online subscribers and this is the first subscription of the user and the
                 // subscription is not filtering notifications based on presence show values.
-                service.presenceSubscriptionRequired(this, owner);
+                getService().presenceSubscriptionRequired(this, owner);
             }
         }
     }
 
     /**
      * Cancels an existing subscription to the node. If the subscriber does not have any
-     * other subscription to the node and his affiliation was of type <tt>none</tt> then
+     * other subscription to the node and his affiliation was of type {@code none} then
      * remove the existing affiliation too.
      *
      * @param subscription the subscription to cancel.
@@ -2144,7 +2220,7 @@ public abstract class Node {
         }
         if (savedToDB) {
             // Remove the subscription from the database
-            PubSubPersistenceManager.removeSubscription(subscription);
+            XMPPServer.getInstance().getPubSubModule().getPersistenceProvider().removeSubscription(subscription);
         }
         if (sendToCluster) {
             CacheFactory.doClusterTask(new CancelSubscriptionTask(subscription));
@@ -2152,13 +2228,13 @@ public abstract class Node {
 
         // Check if we need to unsubscribe from the presence of the owner
         if (isPresenceBasedDelivery() && getSubscriptions(subscription.getOwner()).isEmpty()) {
-            service.presenceSubscriptionNotRequired(this, subscription.getOwner());
+            getService().presenceSubscriptionNotRequired(this, subscription.getOwner());
         }
     }
 
     /**
      * Cancels an existing subscription to the node. If the subscriber does not have any
-     * other subscription to the node and his affiliation was of type <tt>none</tt> then
+     * other subscription to the node and his affiliation was of type {@code none} then
      * remove the existing affiliation too.
      *
      * @param subscription the subscription to cancel.
@@ -2168,10 +2244,10 @@ public abstract class Node {
     }
 
     /**
-     * Returns the {@link PublishedItem} whose ID matches the specified item ID or <tt>null</tt>
+     * Returns the {@link PublishedItem} whose ID matches the specified item ID or {@code null}
      * if none was found. Item ID may or may not exist and it depends on the node's configuration.
      * When the node is configured to not include payloads in event notifications and
-     * published items are not persistent then item ID is not used. In this case a <tt>null</tt>
+     * published items are not persistent then item ID is not used. In this case a {@code null}
      * value will always be returned.
      *
      * @param itemID the ID of the item to retrieve.
@@ -2229,15 +2305,15 @@ public abstract class Node {
 
     @Override
     public String toString() {
-        return super.toString() + " - ID: " + getNodeID();
+        return super.toString() + " - ID: " + nodeID;
     }
 
     /**
-     * Returns the last {@link PublishedItem} that was published to the node or <tt>null</tt> if
+     * Returns the last {@link PublishedItem} that was published to the node or {@code null} if
      * the node does not have published items. Collection nodes does not support publishing
-     * of items so a <tt>null</tt> will be returned in that case.
+     * of items so a {@code null} will be returned in that case.
      *
-     * @return the PublishedItem that was published to the node or <tt>null</tt> if
+     * @return the PublishedItem that was published to the node or {@code null} if
      *         the node does not have published items.
      */
     public PublishedItem getLastPublishedItem() {
@@ -2274,7 +2350,7 @@ public abstract class Node {
         final int prime = 31;
         int result = 1;
         result = prime * result + nodeID.hashCode();
-        result = prime * result + service.getServiceID().hashCode();
+        result = prime * result + serviceIdentifier.getServiceId().hashCode();
         return result;
     }
 
@@ -2282,13 +2358,13 @@ public abstract class Node {
     public boolean equals(Object obj) {
         if (obj == this)
             return true;
-        
+
         if (getClass() != obj.getClass())
             return false;
-        
+
         Node compareNode = (Node) obj;
-        
-        return (service.getServiceID().equals(compareNode.service.getServiceID()) && nodeID.equals(compareNode.nodeID));
+
+        return getUniqueIdentifier().equals(compareNode.getUniqueIdentifier());
     }
 
     /**
@@ -2304,5 +2380,254 @@ public abstract class Node {
          * Dynamically specify a replyto of the item publisher.
          */
         publisher;
+    }
+
+    /**
+     * A unique identifier for a node, in context of all services in the system.
+     *
+     * The properties that uniquely identify a node are its service, and its nodeId.
+     */
+    public final static class UniqueIdentifier implements Serializable
+    {
+        private final String serviceId;
+        private final String nodeId;
+
+        public UniqueIdentifier( final String serviceId, final String nodeId )
+        {
+            if ( serviceId == null ) {
+                throw new IllegalArgumentException( "Argument 'serviceId' cannot be null." );
+            }
+            if ( nodeId == null ) {
+                throw new IllegalArgumentException( "Argument 'nodeId' cannot be null." );
+            }
+            this.serviceId = serviceId;
+            this.nodeId = nodeId;
+        }
+
+        public UniqueIdentifier( final PubSubService.UniqueIdentifier serviceIdentifier, final String nodeId ) {
+            if ( serviceIdentifier == null ) {
+                throw new IllegalArgumentException( "Argument 'serviceIdentifier' cannot be null." );
+            }
+            if ( nodeId == null ) {
+                throw new IllegalArgumentException( "Argument 'nodeId' cannot be null." );
+            }
+            this.serviceId = serviceIdentifier.getServiceId();
+            this.nodeId = nodeId;
+        }
+
+        public PubSubService.UniqueIdentifier getServiceIdentifier()
+        {
+            return new PubSubService.UniqueIdentifier( serviceId );
+        }
+
+        public String getNodeId()
+        {
+            return nodeId;
+        }
+
+        public boolean owns( PublishedItem.UniqueIdentifier itemIdentifier )
+        {
+            return this.equals( itemIdentifier.getNodeIdentifier() );
+        }
+
+        @Override
+        public boolean equals( final Object o )
+        {
+            if ( this == o ) { return true; }
+            if ( o == null || getClass() != o.getClass() ) { return false; }
+            final UniqueIdentifier that = (UniqueIdentifier) o;
+            return serviceId.equals(that.serviceId) &&
+                nodeId.equals(that.nodeId);
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hash(serviceId, nodeId);
+        }
+
+        @Override
+        public String toString()
+        {
+            return "UniqueIdentifier{" +
+                "serviceId='" + serviceId + '\'' +
+                ", nodeId='" + nodeId + '\'' +
+                '}';
+        }
+    }
+
+    @Override
+    public int getCachedSize() throws CannotCalculateSizeException {
+
+        // Please keep this ordered alphabetically for easier maintenance.
+
+        int size = CacheSizes.sizeOfObject(); // object overhead.
+        size += CacheSizes.sizeOfInt(); // accessModel
+        size += CacheSizes.sizeOfCollection( affiliates );
+        size += CacheSizes.sizeOfString( bodyXSLT );
+        size += CacheSizes.sizeOfCollection( contacts );
+        size += CacheSizes.sizeOfDate(); // creationDate
+        size += CacheSizes.sizeOfAnything( creator );
+        size += CacheSizes.sizeOfString( dataformXSLT );
+        size += CacheSizes.sizeOfBoolean(); // deliverPayloads
+        size += CacheSizes.sizeOfString( description );
+        size += CacheSizes.sizeOfString( language );
+        size += CacheSizes.sizeOfDate(); // modificationDate
+        size += CacheSizes.sizeOfString( name );
+        size += CacheSizes.sizeOfString( nodeID );
+        size += CacheSizes.sizeOfBoolean(); // notifyConfigChanges
+        size += CacheSizes.sizeOfBoolean(); // notifyDelete
+        size += CacheSizes.sizeOfBoolean(); // notifyRetract
+        size += CacheSizes.sizeOfObject(); // parent (reference, parent itself will already be in the cache).
+        size += CacheSizes.sizeOfString( payloadType );
+        size += CacheSizes.sizeOfBoolean(); // presenceBasedDelivery
+        size += CacheSizes.sizeOfInt(); // publisherModel
+        size += CacheSizes.sizeOfInt(); // replyPolicy
+        size += CacheSizes.sizeOfCollection( replyRooms );
+        size += CacheSizes.sizeOfCollection( replyTo );
+        size += CacheSizes.sizeOfCollection( rosterGroupsAllowed );
+        size += CacheSizes.sizeOfBoolean(); // savedToDB
+        size += CacheSizes.sizeOfInt(); // service (reference, the instance is re-used by other nodes.
+        size += CacheSizes.sizeOfBoolean(); // subscriptionConfigurationRequired
+        size += CacheSizes.sizeOfBoolean(); // subscriptionEnabled
+        size += 350 * subscriptionsByID.size(); // 350 bytes per entry is a guestimate.
+        size += 350 * subscriptionsByJID.size(); // 350 bytes per entry is a guestimate.
+        return size;
+    }
+
+    @Override
+    public void writeExternal( ObjectOutput out ) throws IOException
+    {
+        final ExternalizableUtil util = ExternalizableUtil.getInstance();
+        util.writeSafeUTF( out, accessModel.getName() );
+
+        util.writeLong( out, affiliates.size() );
+        for ( final NodeAffiliate affiliate : affiliates )
+        {
+            util.writeSerializable( out, affiliate.getJID() );
+            util.writeBoolean( out, affiliate.getAffiliation() != null );
+            if ( affiliate.getAffiliation() != null ) {
+                util.writeSafeUTF( out, affiliate.getAffiliation().name() );
+            }
+        }
+
+        util.writeSafeUTF( out, bodyXSLT );
+        util.writeSerializableCollection( out, contacts );
+        util.writeSerializable( out, creationDate );
+        util.writeSerializable( out, creator );
+        util.writeSafeUTF( out, dataformXSLT );
+        util.writeBoolean( out, deliverPayloads );
+        util.writeSafeUTF( out, description );
+        util.writeSafeUTF( out, language );
+        util.writeSerializable( out, modificationDate );
+        util.writeSafeUTF( out, name );
+        util.writeSafeUTF( out, nodeID );
+        util.writeBoolean( out, notifyConfigChanges );
+        util.writeBoolean( out, notifyDelete );
+        util.writeBoolean( out, notifyRetract );
+        util.writeBoolean( out, parentIdentifier != null );
+        if (parentIdentifier != null) {
+            util.writeSerializable( out, parentIdentifier );
+        }
+        util.writeSafeUTF( out, payloadType );
+        util.writeBoolean( out, presenceBasedDelivery );
+        util.writeSafeUTF( out, publisherModel.getName() );
+        util.writeBoolean( out, replyPolicy != null );
+        if ( replyPolicy != null)
+        {
+            util.writeSafeUTF( out, replyPolicy.name() );
+        }
+        util.writeSerializableCollection( out, replyRooms );
+        util.writeSerializableCollection( out, replyTo );
+        util.writeSerializableCollection( out, rosterGroupsAllowed );
+        util.writeBoolean( out, savedToDB );
+        util.writeSerializable(out, serviceIdentifier);
+        util.writeBoolean( out, subscriptionConfigurationRequired );
+        util.writeBoolean( out, subscriptionEnabled );
+
+        // write out subscriptions once. When reading, use them to populate both maps.
+        final Collection<NodeSubscription> subscriptions = subscriptionsByID.values();
+        util.writeInt( out, subscriptions.size() );
+        for ( final NodeSubscription subscription : subscriptions )
+        {
+            util.writeSerializable( out, subscription.getOwner() );
+            util.writeSerializable( out, subscription.getJID() );
+            util.writeSafeUTF( out, subscription.getState().name() );
+            util.writeSafeUTF( out, subscription.getID() );
+        }
+    }
+
+    @Override
+    public void readExternal( ObjectInput in ) throws IOException, ClassNotFoundException
+    {
+        final ExternalizableUtil util = ExternalizableUtil.getInstance();
+
+        accessModel = AccessModel.valueOf( util.readSafeUTF( in ) );
+
+        final long affiliatesSize = util.readLong( in );
+        final List<NodeAffiliate> tmpAffiliates = new ArrayList<>();
+        for ( int i = 0; i < affiliatesSize; i++ )
+        {
+            final JID affiliateJID = (JID) util.readSerializable( in );
+            final NodeAffiliate affiliate = new NodeAffiliate( this, affiliateJID );
+            if ( util.readBoolean( in ) )
+            {
+                affiliate.setAffiliation( NodeAffiliate.Affiliation.valueOf( util.readSafeUTF( in ) ) );
+            }
+            tmpAffiliates.add( affiliate );
+        }
+        affiliates = new CopyOnWriteArrayList<>( tmpAffiliates ); // pass them all in, in one go, to prevent iterations where arrays are copied in each iteration.
+
+        bodyXSLT = util.readSafeUTF( in );
+        util.readSerializableCollection( in, contacts, getClass().getClassLoader() );
+        creationDate = (Date) util.readSerializable( in );
+        creator = (JID) util.readSerializable( in );
+        dataformXSLT = util.readSafeUTF( in );
+        deliverPayloads = util.readBoolean( in );
+        description = util.readSafeUTF( in );
+        language = util.readSafeUTF( in );
+        modificationDate = (Date) util.readSerializable( in );
+        name = util.readSafeUTF( in );
+        nodeID = util.readSafeUTF( in );
+        notifyConfigChanges = util.readBoolean( in );
+        notifyDelete = util.readBoolean( in );
+        notifyRetract = util.readBoolean( in );
+        if ( util.readBoolean( in ) )
+        {
+            parentIdentifier = (UniqueIdentifier) util.readSerializable( in );
+        }
+        else
+        {
+            parentIdentifier = null;
+        }
+        payloadType = util.readSafeUTF( in );
+        presenceBasedDelivery = util.readBoolean( in );
+        publisherModel = PublisherModel.valueOf( util.readSafeUTF( in ) );
+        if ( util.readBoolean( in ) ) {
+            replyPolicy = ItemReplyPolicy.valueOf( util.readSafeUTF( in ) );
+        } else {
+            replyPolicy = null;
+        }
+        util.readSerializableCollection( in, replyRooms, getClass().getClassLoader() );
+        util.readSerializableCollection( in, replyTo, getClass().getClassLoader() );
+        util.readSerializableCollection( in, rosterGroupsAllowed, getClass().getClassLoader() );
+        savedToDB = util.readBoolean( in );
+        serviceIdentifier = (PubSubService.UniqueIdentifier) util.readSerializable(in);
+        subscriptionConfigurationRequired = util.readBoolean( in );
+        subscriptionEnabled = util.readBoolean( in );
+
+        final int subscriptionCount = util.readInt( in );
+        for ( int i = 0; i < subscriptionCount; i++ )
+        {
+            final Node node = this;
+            final JID owner = (JID) util.readSerializable( in );
+            final JID jid = (JID) util.readSerializable( in );
+            final NodeSubscription.State state = NodeSubscription.State.valueOf( util.readSafeUTF( in ) );
+            final String id = util.readSafeUTF( in );
+            final NodeSubscription subscription = new NodeSubscription( node, owner, jid, state, id );
+
+            subscriptionsByID.put( subscription.getID(), subscription );
+            subscriptionsByJID.put( subscription.getJID().toString(), subscription );
+        }
     }
 }

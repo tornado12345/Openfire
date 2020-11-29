@@ -68,6 +68,7 @@ public class SequenceManager {
         new SequenceManager(JiveConstants.ROSTER, 5);
         new SequenceManager(JiveConstants.OFFLINE, 5);
         new SequenceManager(JiveConstants.MUC_ROOM, 5);
+        new SequenceManager(JiveConstants.MUC_MESSAGE_ID, 50);
     }
 
     /**
@@ -149,13 +150,14 @@ public class SequenceManager {
         managers.put(seqType, this);
         this.type = seqType;
         this.blockSize = size;
-        currentID = 0l;
-        maxID = 0l;
+        currentID = 0L;
+        maxID = 0L;
     }
 
     /**
      * Returns the next available unique ID. Essentially this provides for the functionality of an
      * auto-increment database field.
+     * @return the next sequence number
      */
     public synchronized long nextUniqueID() {
         if (!(currentID < maxID)) {

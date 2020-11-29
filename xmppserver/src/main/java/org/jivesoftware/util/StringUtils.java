@@ -115,6 +115,7 @@ public final class StringUtils {
      * @param line the String to search to perform replacements on.
      * @param oldString the String that should be replaced by newString.
      * @param newString the String that will replace all instances of oldString.
+     * @param count a single element array that, after running, will contain the number of matching items
      * @return a String will all instances of oldString replaced by newString.
      */
     public static String replace(String line, String oldString,
@@ -615,7 +616,7 @@ public final class StringUtils {
     }
 
     /**
-     * Reformats a string where lines that are longer than <tt>width</tt>
+     * Reformats a string where lines that are longer than {@code width}
      * are split apart at the earliest wordbreak or at maxLength, whichever is
      * sooner. If the width specified is less than 5 or greater than the input
      * Strings length the string will be returned as is.
@@ -625,6 +626,7 @@ public final class StringUtils {
      *
      * @param input the String to reformat.
      * @param width the maximum length of any one line.
+     * @param locale the local
      * @return a new String with reformatted as needed.
      */
     public static String wordWrap(String input, int width, Locale locale) {
@@ -817,7 +819,7 @@ public final class StringUtils {
      * "9999" and the desired length is 8, the result would be "00009999".
      * This type of padding is useful for creating numerical values that need
      * to be stored and sorted as character data. Note: the current
-     * implementation of this method allows for a maximum <tt>length</tt> of
+     * implementation of this method allows for a maximum {@code length} of
      * 64.
      *
      * @param string the original String to pad.
@@ -836,7 +838,7 @@ public final class StringUtils {
     /**
      * Formats a Date as a fifteen character long String made up of the Date's
      * padded millisecond value.
-     *
+     * @param date the date to encode
      * @return a Date encoded as a String.
      */
     public static String dateToMillis(Date date) {
@@ -996,7 +998,7 @@ public final class StringUtils {
 
     /**
      * Returns a collection of Strings as a comma-delimitted list of strings.
-     *
+     * @param collection the collection of strings
      * @return a String representing the Collection.
      */
     public static String collectionToString(Collection<String> collection) {
@@ -1015,7 +1017,7 @@ public final class StringUtils {
 
     /**
      * Returns a comma-delimitted list of Strings as a Collection.
-     *
+     * @param string the string to split
      * @return a Collection representing the String.
      */
     public static Collection<String> stringToCollection(String string) {
@@ -1033,8 +1035,8 @@ public final class StringUtils {
     /**
      * Returns true if the given string is in the given array.
      * 
-     * @param array
-     * @param item
+     * @param array an array of Strings to check
+     * @param item the item to look for
      * @return true if the array contains the item
      */
     public static boolean contains(String[] array, String item) {
@@ -1061,7 +1063,7 @@ public final class StringUtils {
      * </pre>
      * @param str the String to abbreviate.
      * @param maxWidth the maximum size of the string, minus the ellipsis.
-     * @return the abbreviated String, or <tt>null</tt> if the string was <tt>null</tt>.
+     * @return the abbreviated String, or {@code null} if the string was {@code null}.
      */
     public static String abbreviate(String str, int maxWidth) {
         if (null == str) {
@@ -1186,7 +1188,8 @@ public final class StringUtils {
         }
         try {
             return Optional.of(Integer.valueOf(value));
-        } catch (final NumberFormatException ignored) {
+        } catch (final NumberFormatException ex) {
+            Log.trace("An exception occurred while trying to parse value '{}' as an integer. Will return empty.", value, ex);
             return Optional.empty();
         }
     }
@@ -1200,5 +1203,76 @@ public final class StringUtils {
         } catch (final NumberFormatException ignored) {
             return Optional.empty();
         }
+    }
+
+    public static Optional<Double> parseDouble(final String value) {
+        if (value == null || value.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Double.valueOf(value));
+        } catch (final NumberFormatException ex) {
+            Log.trace("An exception occurred while trying to parse value '{}' as long. Will return empty.", value, ex);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Parses a boolean. Subtly different from Boolean.parseBoolean in that it returns {@code Optional.empty()}
+     * instead of {@code false} if the supplied value is not "true" or "false" (ignoring case)
+     * @param value Any string value
+     * @return {@code true}, {@code false} or {@code Optional.empty()}
+     */
+    public static Optional<Boolean> parseBoolean(final String value) {
+        if("true".equalsIgnoreCase(value)) {
+            return Optional.of(Boolean.TRUE);
+        } else if("false".equalsIgnoreCase(value)) {
+            return Optional.of(Boolean.FALSE);
+        } else {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Simple Java program to tokenize string as a shell would - similar to shlex in Python
+     *
+     * @param string The string to be split.
+     * @return The splitted string.
+     * @see <a href="https://gist.github.com/raymyers/8077031">https://gist.github.com/raymyers/8077031</a>
+     */
+    public static List<String> shellSplit(CharSequence string) {
+        List<String> tokens = new ArrayList<>();
+        if ( string == null ) {
+            return tokens;
+        }
+        boolean escaping = false;
+        char quoteChar = ' ';
+        boolean quoting = false;
+        StringBuilder current = new StringBuilder() ;
+        for (int i = 0; i<string.length(); i++) {
+            char c = string.charAt(i);
+            if (escaping) {
+                current.append(c);
+                escaping = false;
+            } else if (c == '\\' && !(quoting && quoteChar == '\'')) {
+                escaping = true;
+            } else if (quoting && c == quoteChar) {
+                quoting = false;
+            } else if (!quoting && (c == '\'' || c == '"')) {
+                quoting = true;
+                quoteChar = c;
+            } else if (!quoting && Character.isWhitespace(c)) {
+                if (current.length() > 0) {
+                    tokens.add(current.toString());
+                    current = new StringBuilder();
+                }
+            } else {
+                current.append(c);
+            }
+        }
+        if (current.length() > 0) {
+            tokens.add(current.toString());
+        }
+        return tokens;
     }
 }

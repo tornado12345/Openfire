@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.jivesoftware.database.DbConnectionManager;
+import org.jivesoftware.openfire.XMPPServerInfo;
 import org.jivesoftware.util.JiveGlobals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,35 +33,34 @@ import org.xmpp.packet.JID;
 
 /**
  * The JDBC admin provider allows you to use an external database to define the administrators
- * users. It is best used with the JDBCAuthProvider & JDBCGroupProvider to provide integration
+ * users. It is best used with the JDBCAuthProvider &amp; JDBCGroupProvider to provide integration
  * between your external system and Openfire. All data is treated as read-only so any
- * set operations will result in an exception.<p/>
+ * set operations will result in an exception.<p>
  *
- * To enable this provider, set the following in the system properties:<p/>
+ * To enable this provider, set the following in the system properties:
  *
  * <ul>
- * <li><tt>provider.admin.className = org.jivesoftware.openfire.admin.JDBCAdminProvider</tt></li>
+ * <li>{@code provider.admin.className = org.jivesoftware.openfire.admin.JDBCAdminProvider}</li>
  * </ul>
  *
  * Then you need to set your driver, connection string and SQL statements:
- * <p/>
  * <ul>
- * <li><tt>jdbcProvider.driver = com.mysql.jdbc.Driver</tt></li>
- * <li><tt>jdbcProvider.connectionString = jdbc:mysql://localhost/dbname?user=username&amp;password=secret</tt></li>
- * <li><tt>jdbcAdminProvider.getAdminsSQL = SELECT user FROM myAdmins</tt></li>
+ * <li>{@code jdbcProvider.driver = com.mysql.jdbc.Driver}</li>
+ * <li>{@code jdbcProvider.connectionString = jdbc:mysql://localhost/dbname?user=username&amp;password=secret}</li>
+ * <li>{@code jdbcAdminProvider.getAdminsSQL = SELECT user FROM myAdmins}</li>
  * </ul>
  * <p>
  * If you want to be able to update the admin users via the UI, add the following properties:
  * <ul>
- * <li><tt>jdbcAdminProvider.insertAdminsSQL = INSERT INTO myAdmins (user) VALUES (?)</tt></li>
- * <li><tt>jdbcAdminProvider.deleteAdminsSQL = DELETE FROM myAdmins WHERE user = ?</tt></li>
+ * <li>{@code jdbcAdminProvider.insertAdminsSQL = INSERT INTO myAdmins (user) VALUES (?)}</li>
+ * <li>{@code jdbcAdminProvider.deleteAdminsSQL = DELETE FROM myAdmins WHERE user = ?}</li>
  * </ul>
  * <p>
  * In order to use the configured JDBC connection provider do not use a JDBC
  * connection string, set the following property
  *
  * <ul>
- * <li><tt>jdbcAdminProvider.useConnectionProvider = true</tt></li>
+ * <li>{@code jdbcAdminProvider.useConnectionProvider = true}</li>
  * </ul>
  *
  *
@@ -87,7 +87,7 @@ public class JDBCAdminProvider implements AdminProvider {
         JiveGlobals.migrateProperty("jdbcProvider.connectionString");
         JiveGlobals.migrateProperty("jdbcAdminProvider.getAdminsSQL");
 
-        xmppDomain = JiveGlobals.getProperty("xmpp.domain");
+        xmppDomain = XMPPServerInfo.XMPP_DOMAIN.getValue();
         useConnectionProvider = JiveGlobals.getBooleanProperty("jdbcAdminProvider.useConnectionProvider");
 
         // Load database statement for reading admin list
@@ -108,6 +108,20 @@ public class JDBCAdminProvider implements AdminProvider {
         }
     }
 
+    /**
+     * XMPP disallows some characters in identifiers, requiring them to be escaped.
+     *
+     * This implementation assumes that the database returns properly escaped identifiers,
+     * but can apply escaping by setting the value of the 'jdbcAdminProvider.isEscaped'
+     * property to 'false'.
+     *
+     * @return 'false' if this implementation needs to escape database content before processing.
+     */
+    protected boolean assumePersistedDataIsEscaped()
+    {
+        return JiveGlobals.getBooleanProperty( "jdbcAdminProvider.isEscaped", true );
+    }
+
     @Override
     public List<JID> getAdmins() {
         Connection con = null;
@@ -121,8 +135,14 @@ public class JDBCAdminProvider implements AdminProvider {
             pstmt = con.prepareStatement(getAdminsSQL);
             rs = pstmt.executeQuery();
             while (rs.next()) {
-                String name = rs.getString(1);
-                jids.add(new JID(name + "@" + xmppDomain));
+                // OF-1837: When the database does not hold escaped data, escape values before processing them further.
+                final String username;
+                if (assumePersistedDataIsEscaped()) {
+                    username = rs.getString(1);
+                } else {
+                    username = JID.escapeNode( rs.getString(1) );
+                }
+                jids.add(new JID(username + "@" + xmppDomain));
             }
             return jids;
         } catch (SQLException e) {
@@ -137,7 +157,9 @@ public class JDBCAdminProvider implements AdminProvider {
         if (!admins.isEmpty()) {
             try (final PreparedStatement pstmt = con.prepareStatement(sql)) {
                 for (final JID jid : admins) {
-                    pstmt.setString(1, jid.getNode());
+                    // OF-1837: When the database does not hold escaped data, our query should use unescaped values in the 'where' clause.
+                    final String queryValue = assumePersistedDataIsEscaped() ? jid.getNode() : JID.unescapeNode( jid.getNode() );
+                    pstmt.setString(1, queryValue);
                     pstmt.execute();
                 }
             }

@@ -17,14 +17,23 @@
 package org.jivesoftware.openfire.container;
 
 import java.io.File;
+import java.io.IOException;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.jasper.servlet.JasperInitializer;
 import org.apache.tomcat.InstanceManager;
 import org.apache.tomcat.SimpleInstanceManager;
+import org.eclipse.jetty.annotations.AnnotationConfiguration;
 import org.eclipse.jetty.annotations.ServletContainerInitializersStarter;
 import org.eclipse.jetty.plus.annotation.ContainerInitializer;
+import org.eclipse.jetty.plus.webapp.EnvConfiguration;
+import org.eclipse.jetty.plus.webapp.PlusConfiguration;
 import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.HttpConfiguration;
@@ -36,9 +45,16 @@ import org.eclipse.jetty.server.SslConnectionFactory;
 import org.eclipse.jetty.server.handler.ContextHandlerCollection;
 import org.eclipse.jetty.server.handler.DefaultHandler;
 import org.eclipse.jetty.server.handler.HandlerCollection;
+import org.eclipse.jetty.util.resource.Resource;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
+import org.eclipse.jetty.webapp.Configuration;
+import org.eclipse.jetty.webapp.FragmentConfiguration;
+import org.eclipse.jetty.webapp.JettyWebXmlConfiguration;
+import org.eclipse.jetty.webapp.MetaInfConfiguration;
 import org.eclipse.jetty.webapp.WebAppContext;
+import org.eclipse.jetty.webapp.WebInfConfiguration;
+import org.eclipse.jetty.webapp.WebXmlConfiguration;
 import org.jivesoftware.openfire.JMXManager;
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.keystore.CertificateStore;
@@ -91,6 +107,9 @@ public class AdminConsolePlugin implements Plugin {
      * Starts the Jetty instance.
      */
     protected void startup() {
+
+        deleteLegacyWebInfLibFolder();
+
         restartNeeded = false;
 
         // Add listener for certificate events
@@ -204,6 +223,63 @@ public class AdminConsolePlugin implements Plugin {
         }
     }
 
+    private void deleteLegacyWebInfLibFolder() {
+        /*
+        See https://igniterealtime.atlassian.net/projects/OF/issues/OF-1647 - with the migration from Ant to Maven, Openfire
+        needs less JAR files scattered around the file system. When upgrading from before 4.3.0, the old file are not
+        removed by the installer, so this method attempts to remove them.
+         */
+        final Path libFolder = Paths.get(pluginDir.getAbsoluteFile().toString(), "webapp", "WEB-INF", "lib");
+        if (!Files.exists(libFolder) || !Files.isDirectory(libFolder)) {
+            // Nothing to do
+            return;
+        }
+
+        final int maxAttempts = 10;
+        int currentAttempt = 1;
+        do {
+            int backupSuffix = 1;
+            String backupFileName;
+            do {
+                backupFileName = "lib.backup-" + backupSuffix;
+                backupSuffix++;
+            } while (Files.exists(libFolder.resolveSibling(backupFileName)));
+
+            Log.warn("Renaming legacy admin WEB-INF/lib folder to {}. Attempt #{} {}", backupFileName, currentAttempt, libFolder);
+
+            currentAttempt++;
+            try {
+                Files.move(libFolder, libFolder.resolveSibling(backupFileName));
+            } catch (final IOException e) {
+               Log.warn("Exception attempting to delete folder, will retry shortly", e);
+            }
+            if(Files.exists(libFolder)) {
+                try {
+                    Thread.sleep(1000);
+                } catch (final InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    Log.warn("Interrupted whilst sleeping - aborting attempt to rename lib folder", e);
+                }
+            }
+        } while (Files.exists(libFolder) && currentAttempt <= maxAttempts && !Thread.currentThread().isInterrupted());
+
+        if (!Files.exists(libFolder)) {
+            // We succeeded, so continue
+            return;
+        }
+
+        // The old lib folder still exists, will have to be deleted manully
+        final String message = "The folder " + libFolder + " must be manually renamed or deleted before Openfire can start. Shutting down.";
+        // Log this everywhere so it's impossible (?) to miss
+        Log.debug(message);
+        Log.info(message);
+        Log.warn(message);
+        Log.error(message);
+        System.out.println(message);
+        XMPPServer.getInstance().stop();
+        throw new IllegalStateException(message);
+    }
+
     /**
      * Shuts down the Jetty server.
      * */
@@ -212,7 +288,6 @@ public class AdminConsolePlugin implements Plugin {
         if (certificateListener != null) {
             CertificateManager.removeListener(certificateListener);
         }
-        //noinspection ConstantConditions
         try {
             if (adminServer != null && adminServer.isRunning()) {
                 adminServer.stop();
@@ -257,7 +332,7 @@ public class AdminConsolePlugin implements Plugin {
     }
 
     /**
-     * Returns <tt>null</tt> if the admin console will be available in all network interfaces of this machine
+     * Returns {@code null} if the admin console will be available in all network interfaces of this machine
      * or a String representing the only interface where the admin console will be available.
      *
      * @return String representing the only interface where the admin console will be available or null if it
@@ -355,6 +430,18 @@ public class AdminConsolePlugin implements Plugin {
         initializers.add(new ContainerInitializer(new JasperInitializer(), null));
         context.setAttribute("org.eclipse.jetty.containerInitializers", initializers);
         context.setAttribute(InstanceManager.class.getName(), new SimpleInstanceManager());
+        context.setConfigurations(new Configuration[]{
+            new AnnotationConfiguration(),
+            new WebInfConfiguration(),
+            new WebXmlConfiguration(),
+            new MetaInfConfiguration(),
+            new FragmentConfiguration(),
+            new EnvConfiguration(),
+            new PlusConfiguration(),
+            new JettyWebXmlConfiguration()
+        });
+        final URL classes = getClass().getProtectionDomain().getCodeSource().getLocation();
+        context.getMetaData().setWebInfClassesDirs(Collections.singletonList(Resource.newResource(classes)));
 
         // The index.html includes a redirect to the index.jsp and doesn't bypass
         // the context security when in development mode

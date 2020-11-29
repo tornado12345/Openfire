@@ -24,6 +24,7 @@ import org.jivesoftware.openfire.user.UserNotFoundException;
 import org.jivesoftware.util.XMPPDateTimeFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.xml.sax.SAXException;
 import org.xmpp.packet.JID;
 import org.xmpp.packet.Message;
 
@@ -149,6 +150,7 @@ public final class MUCRoomHistory {
      * @param sentDate the date when the message was sent to the room.
      * @param subject the subject included in the message.
      * @param body the body of the message.
+     * @param stanza the stanza to add
      */
     public void addOldMessage(String senderJID, String nickname, Date sentDate, String subject,
             String body, String stanza)
@@ -157,9 +159,8 @@ public final class MUCRoomHistory {
         message.setType(Message.Type.groupchat);
         if (stanza != null) {
             // payload initialized as XML string from DB
-            SAXReader xmlReader = new SAXReader();
-            xmlReader.setEncoding("UTF-8");
             try {
+                SAXReader xmlReader = setupSAXReader();
                 Element element = xmlReader.read(new StringReader(stanza)).getRootElement();
                 for (Element child : (List<Element>)element.elements()) {
                     Namespace ns = child.getNamespace();
@@ -211,6 +212,15 @@ public final class MUCRoomHistory {
         historyStrategy.addMessage(message);
     }
 
+    private SAXReader setupSAXReader() throws SAXException {
+        SAXReader xmlReader = new SAXReader();
+        xmlReader.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        xmlReader.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        xmlReader.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        xmlReader.setEncoding("UTF-8");
+        return xmlReader;
+    }
+
     /**
      * Returns true if there is a message within the history of the room that has changed the
      * room's subject.
@@ -234,7 +244,8 @@ public final class MUCRoomHistory {
 
     /**
      * Returns true if the given message qualifies as a subject change request, per XEP-0045.
-     * 
+     *
+     * @param message the message to check
      * @return true if the given packet is a subject change request
      */
     public boolean isSubjectChangeRequest(Message message) {

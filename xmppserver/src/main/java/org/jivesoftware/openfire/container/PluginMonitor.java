@@ -16,21 +16,34 @@
 
 package org.jivesoftware.openfire.container;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
+import java.util.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
+import java.util.zip.ZipFile;
+
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.util.JiveGlobals;
 import org.jivesoftware.util.PropertyEventDispatcher;
 import org.jivesoftware.util.PropertyEventListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.*;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
-import java.util.zip.ZipFile;
 
 /**
  * A service that monitors the plugin directory for plugins. It periodically checks for new plugin JAR files and
@@ -130,6 +143,7 @@ public class PluginMonitor implements PropertyEventListener
 
     /**
      * Immediately run a check of the plugin directory.
+     * @param blockUntilDone {code true} to wait until the check is complete, otherwise {@code false}
      */
     public void runNow( boolean blockUntilDone )
     {
@@ -259,7 +273,14 @@ public class PluginMonitor implements PropertyEventListener
                             // If the JAR needs to be exploded, do so.
                             if ( Files.notExists( dir ) )
                             {
-                                unzipPlugin( canonicalPluginName, jarFile, dir );
+                                if (!unzipPlugin( canonicalPluginName, jarFile, dir ) )
+                                {
+                                    // the 'continue' statement is strictly unneeded here, as this
+                                    // is the last statement at the time of writing. It's left in
+                                    // to avoid future additions to this code from progressing
+                                    // beyond this point.
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -419,17 +440,39 @@ public class PluginMonitor implements PropertyEventListener
          * @param pluginName the name of the plugin.
          * @param file       the JAR file
          * @param dir        the directory to extract the plugin to.
+         * @return A boolean indicating success.
          */
-        private void unzipPlugin( String pluginName, Path file, Path dir )
+        private boolean unzipPlugin( String pluginName, Path file, Path dir )
         {
             try ( ZipFile zipFile = new JarFile( file.toFile() ) )
             {
                 // Ensure that this JAR is a plugin.
                 if ( zipFile.getEntry( "plugin.xml" ) == null )
                 {
-                    return;
+                    return false;
                 }
+
+                // Protect against zip-slip (before applying any file-system modifications).
+                if ( JiveGlobals.getBooleanProperty( "plugins.loading.zipslipDetection.enabled", true ) )
+                {
+                    for ( Enumeration e = zipFile.entries(); e.hasMoreElements(); )
+                    {
+                        JarEntry entry = (JarEntry) e.nextElement();
+                        Path entryFile = dir.resolve( entry.getName() );
+                        if ( !entryFile.normalize().toAbsolutePath().startsWith( dir.normalize().toAbsolutePath() ) )
+                        {
+                            throw new RuntimeException( "Plugin contains content that is outside of target plugin directory (possible zipslip attack)" );
+                        }
+                    }
+                }
+
                 Files.createDirectory( dir );
+                // OF-1973: Prevent future-timestamped jar files from restarting the installation process.
+                if ( Files.getLastModifiedTime( file ).toMillis() > System.currentTimeMillis() )
+                {
+                    final FileTime now = FileTime.fromMillis(System.currentTimeMillis());
+                    Files.setLastModifiedTime(file, now);
+                }
                 // Set the date of the JAR file to the newly created folder
                 Files.setLastModifiedTime( dir, Files.getLastModifiedTime( file ) );
                 Log.debug( "Extracting plugin '{}'...", pluginName );
@@ -452,10 +495,12 @@ public class PluginMonitor implements PropertyEventListener
                     }
                 }
                 Log.debug( "Successfully extracted plugin '{}'.", pluginName );
+                return true;
             }
             catch ( Exception e )
             {
                 Log.error( "An exception occurred while trying to extract plugin '{}':", pluginName, e );
+                return false;
             }
         }
 
@@ -510,11 +555,21 @@ public class PluginMonitor implements PropertyEventListener
             }
 
             // Return a deque of lists, where each list is parent-child chain of plugins (the parents preceding its children).
+            final Set<PluginToLoad> pluginsToLoad = new HashSet<>();
             final Deque<List<Path>> result = new ArrayDeque<>();
             for ( final Node noParentPlugin : root.children )
             {
                 final List<Path> hierarchy = new ArrayList<>();
                 walkTree( noParentPlugin, hierarchy );
+                // Strip out duplicates
+                final Iterator<Path> iterator = hierarchy.iterator();
+                while (iterator.hasNext()) {
+                    final PluginToLoad pluginToLoad = new PluginToLoad(iterator.next());
+                    if (!pluginsToLoad.add(pluginToLoad)) {
+                        Log.warn("Unable to load plugin at '{}' as a different plugin with the same name is present", pluginToLoad.path);
+                        iterator.remove();
+                    }
+                }
 
                 // The admin plugin should go first
                 if ( noParentPlugin.getName().equals( "admin" ) )
@@ -579,6 +634,57 @@ public class PluginMonitor implements PropertyEventListener
             {
                 return PluginMetadataHelper.getCanonicalName( path );
             }
+        }
+    }
+
+    /**
+     * Two plugins are considered "equal" if they share the same canonical name, <strong>or</strong> the same
+     * name from the plugin.xml file. This class represents a plugin that could be loaded to encapsulate this concept
+     * <p>
+     *     Note: this class has a natural ordering that is inconsistent with equals.
+     * </p>
+     */
+    private static final class PluginToLoad implements Comparable<PluginToLoad> {
+        private final Path path;
+        private final String canonicalName;
+        private final String pluginName;
+
+        private PluginToLoad(final Path path) {
+            this.path = path;
+            this.canonicalName = PluginMetadataHelper.getCanonicalName( path );
+            this.pluginName = PluginMetadataHelper.getName( path );
+        }
+
+        @Override
+        public boolean equals(final Object o) {
+            if (this == o) {
+                return true;
+            }
+
+            if (!(o instanceof PluginToLoad)) {
+                return false;
+            }
+
+            final PluginToLoad that = (PluginToLoad) o;
+            return this.canonicalName.equalsIgnoreCase(that.canonicalName)
+                || this.pluginName.equalsIgnoreCase(that.pluginName);
+        }
+
+        @Override
+        public int hashCode() {
+            // Note this is sub-optimal, but not an issue for the relatively low number of plugins Openfire will have
+            // installed. It is necessary because of the Java equals/hashCode contract - two equals objects must have
+            // the same hash code - but we don't know if the objects are equal because the share the same canonical name
+            // or the same plugin name.
+            return 0;
+        }
+
+        @Override
+        public int compareTo(final PluginToLoad that) {
+            // NB. This violates the Comparable recommendation. Quote:
+            // <p>It is strongly recommended, but <i>not</i> strictly required that
+            // {@code (x.compareTo(y)==0) == (x.equals(y))}.
+            return this.pluginName.compareTo(that.pluginName);
         }
     }
 }

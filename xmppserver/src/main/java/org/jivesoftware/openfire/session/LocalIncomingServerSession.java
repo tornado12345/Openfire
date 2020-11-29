@@ -16,13 +16,13 @@
 package org.jivesoftware.openfire.session;
 
 import java.io.IOException;
-import java.security.KeyStoreException;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.dom4j.Element;
 import org.dom4j.io.XMPPPacketReader;
@@ -47,7 +47,7 @@ import org.xmpp.packet.Packet;
 /**
  * Server-to-server communication is done using two TCP connections between the servers. One
  * connection is used for sending packets while the other connection is used for receiving packets.
- * The <tt>IncomingServerSession</tt> represents the connection to a remote server that will only
+ * The {@code IncomingServerSession} represents the connection to a remote server that will only
  * be used for receiving packets.<p>
  *
  * Currently only the Server Dialback method is being used for authenticating the remote server.
@@ -91,7 +91,7 @@ public class LocalIncomingServerSession extends LocalServerSession implements In
     /**
      * Creates a new session that will receive packets. The new session will be authenticated
      * before being returned. If the authentication process fails then the answer will be
-     * <tt>null</tt>.<p>
+     * {@code null}.<p>
      *
      * @param serverName hostname of this server.
      * @param reader reader on the new established connection with the remote server.
@@ -380,5 +380,24 @@ public class LocalIncomingServerSession extends LocalServerSession implements In
     
     public void tlsAuth() {
         usingServerDialback = false;
+    }
+
+    @Override
+    public String toString()
+    {
+        return this.getClass().getSimpleName() +"{" +
+            "address=" + getAddress() +
+            ", streamID=" + getStreamID() +
+            ", status=" + getStatus() +
+            (getStatus() == STATUS_AUTHENTICATED ? " (authenticated)" : "" ) +
+            (getStatus() == STATUS_CONNECTED ? " (connected)" : "" ) +
+            (getStatus() == STATUS_CLOSED ? " (closed)" : "" ) +
+            ", isSecure=" + isSecure() +
+            ", isDetached=" + isDetached() +
+            ", isUsingServerDialback=" + isUsingServerDialback() +
+            ", localDomain=" + getLocalDomain() +
+            ", defaultIdentity=" + getDefaultIdentity() +
+            ", validatedDomains=" + validatedDomains.stream().collect( Collectors.joining( ", ", "{", "}")) +
+            '}';
     }
 }

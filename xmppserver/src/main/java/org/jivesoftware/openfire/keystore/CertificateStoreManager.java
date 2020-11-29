@@ -16,12 +16,7 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.function.Function;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
-
-import static org.jivesoftware.openfire.spi.ConnectionType.SOCKET_C2S;
 
 /**
  * A manager of certificate stores.
@@ -169,7 +164,7 @@ public class CertificateStoreManager extends BasicModule
 
         // Always store the new configuration in properties, to make sure that we override a potential fallback.
         JiveGlobals.setProperty( type.getPrefix() + "keystore", configuration.getFile().getPath() ); // FIXME ensure that this is relative to Openfire home!
-        JiveGlobals.setProperty( type.getPrefix() + "keypass", new String( configuration.getPassword() ) );
+        JiveGlobals.setProperty( type.getPrefix() + "keypass", new String( configuration.getPassword() ), true );
     }
 
     public void replaceTrustStore( ConnectionType type, CertificateStoreConfiguration configuration, boolean createIfAbsent ) throws CertificateStoreConfigException
@@ -223,7 +218,7 @@ public class CertificateStoreManager extends BasicModule
 
         // Always store the new configuration in properties, to make sure that we override a potential fallback.
         JiveGlobals.setProperty( type.getPrefix() + "truststore", configuration.getFile().getPath() ); // FIXME ensure that this is relative to Openfire home!
-        JiveGlobals.setProperty( type.getPrefix() + "trustpass", new String( configuration.getPassword() )  );
+        JiveGlobals.setProperty( type.getPrefix() + "trustpass", new String( configuration.getPassword() ), true  );
     }
 
     public CertificateStoreConfiguration getIdentityStoreConfiguration( ConnectionType type ) throws IOException
@@ -231,7 +226,7 @@ public class CertificateStoreManager extends BasicModule
         // Getting individual properties might use fallbacks. It is assumed (but not asserted) that each property value
         // is obtained from the same connectionType (which is either the argument to this method, or one of its
         // fallbacks.
-        final String keyStoreType = getKeyStoreType( type );
+        final String keyStoreType = getIdentityStoreType( type );
         final String password = getIdentityStorePassword( type );
         final String location = getIdentityStoreLocation( type );
         final String backupDirectory = getIdentityStoreBackupDirectory( type );
@@ -246,7 +241,7 @@ public class CertificateStoreManager extends BasicModule
         // Getting individual properties might use fallbacks. It is assumed (but not asserted) that each property value
         // is obtained from the same connectionType (which is either the argument to this method, or one of its
         // fallbacks.
-        final String keyStoreType = getKeyStoreType( type );
+        final String keyStoreType = getTrustStoreType( type );
         final String password = getTrustStorePassword( type );
         final String location = getTrustStoreLocation( type );
         final String backupDirectory = getTrustStoreBackupDirectory( type );
@@ -262,6 +257,8 @@ public class CertificateStoreManager extends BasicModule
      * Each certificate store can be configured to use a distinct file, as well as use a distinct backup location.
      * In practise, there will be a lot of overlap. This implementation creates a backup (by copying the file) for
      * each unique file/backup-location combination in the collection of all certificate stores.
+     * @return the paths the store was backed up to
+     * @throws IOException if the store could not be backed up
      */
     public Collection<Path> backup() throws IOException
     {
@@ -293,13 +290,91 @@ public class CertificateStoreManager extends BasicModule
     }
 
     /**
-     * The KeyStore type (jks, jceks, pkcs12, etc) for the identity and trust store for connections created by this
-     * listener.
+     * The KeyStore type (jks, jceks, pkcs12, etc) for the trust store for connections of a particular type.
      *
+     * @param type the connection type
      * @return a store type (never null).
      * @see <a href="https://docs.oracle.com/javase/7/docs/technotes/guides/security/StandardNames.html#KeyStore">Java Cryptography Architecture Standard Algorithm Name Documentation</a>
      */
-    static String getKeyStoreType( ConnectionType type )
+    public static String getTrustStoreType( ConnectionType type )
+    {
+        final String propertyName = type.getPrefix() + "trustStoreType";
+        final String defaultValue = getKeyStoreType( type );
+
+        if ( type.getFallback() == null )
+        {
+            return JiveGlobals.getProperty( propertyName, defaultValue ).trim();
+        }
+        else
+        {
+            return JiveGlobals.getProperty( propertyName, getTrustStoreType( type.getFallback() ) ).trim();
+        }
+    }
+
+    static void setTrustStoreType( ConnectionType type, String keyStoreType )
+    {
+        // Always set the property explicitly even if it appears the equal to the old value (the old value might be a fallback value).
+        JiveGlobals.setProperty( type.getPrefix() + "trustStoreType", keyStoreType );
+
+        final String oldKeyStoreType = getTrustStoreType( type );
+        if ( oldKeyStoreType.equals( keyStoreType ) )
+        {
+            Log.debug( "Ignoring Trust Store type change request (to '{}'): listener already in this state.", keyStoreType );
+            return;
+        }
+
+        Log.debug( "Changing Trust Store type from '{}' to '{}'.", oldKeyStoreType, keyStoreType );
+        // TODO shouldn't this do something?
+    }
+
+    /**
+     * The KeyStore type (jks, jceks, pkcs12, etc) for the identity store for connections of a particular type.
+     *
+     * @param type the connection type
+     * @return a store type (never null).
+     * @see <a href="https://docs.oracle.com/javase/7/docs/technotes/guides/security/StandardNames.html#KeyStore">Java Cryptography Architecture Standard Algorithm Name Documentation</a>
+     */
+    public static String getIdentityStoreType( ConnectionType type )
+    {
+        final String propertyName = type.getPrefix() + "identityStoreType";
+        final String defaultValue = getKeyStoreType( type );
+
+        if ( type.getFallback() == null )
+        {
+            return JiveGlobals.getProperty( propertyName, defaultValue ).trim();
+        }
+        else
+        {
+            return JiveGlobals.getProperty( propertyName, getIdentityStoreType( type.getFallback() ) ).trim();
+        }
+    }
+
+    static void setIdentityStoreType( ConnectionType type, String keyStoreType )
+    {
+        // Always set the property explicitly even if it appears the equal to the old value (the old value might be a fallback value).
+        JiveGlobals.setProperty( type.getPrefix() + "identityStoreType", keyStoreType );
+
+        final String oldKeyStoreType = getIdentityStoreType( type );
+        if ( oldKeyStoreType.equals( keyStoreType ) )
+        {
+            Log.debug( "Ignoring Identity Store type change request (to '{}'): listener already in this state.", keyStoreType );
+            return;
+        }
+
+        Log.debug( "Changing Identity Store type from '{}' to '{}'.", oldKeyStoreType, keyStoreType );
+        // TODO shouldn't this do something?
+    }
+
+    /**
+     * The KeyStore type (jks, jceks, pkcs12, etc) for the identity and trust store for connections of a particular type.
+     *
+     * @param type the connection type
+     * @return a store type (never null).
+     * @see <a href="https://docs.oracle.com/javase/7/docs/technotes/guides/security/StandardNames.html#KeyStore">Java Cryptography Architecture Standard Algorithm Name Documentation</a>
+     * @deprecated use either {@link #getTrustStoreType(ConnectionType)} or {@link #getIdentityStoreType(ConnectionType)}
+     */
+    @Deprecated
+    public static String getKeyStoreType( ConnectionType type )
     {
         final String propertyName = type.getPrefix() + "storeType";
         final String defaultValue = "jks";
@@ -327,6 +402,7 @@ public class CertificateStoreManager extends BasicModule
         }
 
         Log.debug( "Changing KeyStore type from '{}' to '{}'.", oldKeyStoreType, keyStoreType );
+        // TODO shouldn't this do something?
     }
 
     /**
@@ -400,7 +476,7 @@ public class CertificateStoreManager extends BasicModule
         final String defaultValue;
 
         // OF-1191: For client-oriented connection types, Openfire traditionally uses a different truststore.
-        if ( Arrays.asList( SOCKET_C2S, ConnectionType.BOSH_C2S, ConnectionType.WEBADMIN ).contains( type ) )
+        if ( type.isClientOriented() )
         {
             defaultValue = "resources" + File.separator + "security" + File.separator + "client.truststore";
         }
@@ -422,6 +498,7 @@ public class CertificateStoreManager extends BasicModule
     /**
      * The location (relative to OPENFIRE_HOME) of the directory that holds backups for identity stores.
      *
+     * @param type the connection type
      * @return a path (never null).
      */
     public static String getIdentityStoreBackupDirectory( ConnectionType type )
@@ -442,6 +519,7 @@ public class CertificateStoreManager extends BasicModule
     /**
      * The location (relative to OPENFIRE_HOME) of the directory that holds backups for trust stores.
      *
+     * @param type the connection type
      * @return a path (never null).
      */
     public static String getTrustStoreBackupDirectory( ConnectionType type )
@@ -485,7 +563,7 @@ public class CertificateStoreManager extends BasicModule
      * changes are made to use different keystores for at least one connection type, this method returns 'true'.
      *
      * @return true if Openfire is using different keystores based on the type of connection, false when running with the default store configuration.
-     * @throws IOException
+     * @throws IOException if there was an IO error
      */
     public boolean usesDistinctConfigurationForEachType() throws IOException
     {
@@ -505,7 +583,7 @@ public class CertificateStoreManager extends BasicModule
             }
 
             // Client-to-Server trust stores
-            if ( connectionType == SOCKET_C2S || (connectionType.getFallback() != null && connectionType.getFallback() == SOCKET_C2S) )
+            if ( connectionType.isClientOriented() )
             {
                 if ( c2sTrustStoreConfiguration == null )
                 {

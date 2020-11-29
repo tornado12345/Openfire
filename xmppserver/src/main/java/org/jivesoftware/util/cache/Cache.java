@@ -20,6 +20,8 @@ import java.io.Serializable;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
 
 /**
  * General purpose cache. It stores objects associated with unique keys in
@@ -44,6 +46,13 @@ import java.util.Set;
  *
  * Note that neither keys or values can be null; A {@link NullPointerException}
  * will be thrown attempting to place or retrieve null values in to the cache.
+ *
+ * Caches can (but need not be) used as a mechanism that is used to share data
+ * in an Openfire cluster. When a cache is used for this purpose, it is important
+ * to realize that, when joining or leaving a cluster, the cache content will
+ * be cleared of all data that was added on the local cluster node. Typically,
+ * {@link org.jivesoftware.openfire.cluster.ClusterEventListener} is used to
+ * detect these events and restore the content of the cache.
  *
  * @see Cacheable
  */
@@ -73,7 +82,7 @@ public interface Cache<K extends Serializable, V extends Serializable> extends j
     long getMaxCacheSize();
 
     /**
-     * Sets the maximum size of the cache in bytes. If the cache grows larger
+     * Sets the maximum size of the cache in bytes limited to integer size. If the cache grows larger
      * than the max size, the least frequently used items will be removed. If
      * the max cache size is set to -1, there is no size limit.
      *
@@ -82,7 +91,24 @@ public interface Cache<K extends Serializable, V extends Serializable> extends j
      *
      * @param maxSize the maximum size of the cache in bytes.
      */
+    @Deprecated
     void setMaxCacheSize(int maxSize);
+
+    /**
+     * Sets the maximum size of the cache in bytes. If the cache grows larger
+     * than the max size, the least frequently used items will be removed. If
+     * the max cache size is set to -1, there is no size limit.
+     *
+     *<p><strong>Note:</strong> If using the Hazelcast clustering plugin, this will not take
+     * effect until the next time the cache is created</p>
+     *
+     * Attention: The default implementation of this method sets the cache value limited to integer size.
+     *
+     * @param maxSize the maximum size of the cache in bytes.
+     */
+    default void setMaxCacheSize(long maxSize){
+        setMaxCacheSize((int)Math.min(Integer.MAX_VALUE,maxSize));
+    }
 
     /**
      * Returns the maximum number of milliseconds that any object can live
@@ -108,14 +134,29 @@ public interface Cache<K extends Serializable, V extends Serializable> extends j
     void setMaxLifetime(long maxLifetime);
 
     /**
-     * Returns the size of the cache contents in bytes. This value is only a
+     * Returns the size of the cache contents in bytes limited to integer size. This value is only a
      * rough approximation, so cache users should expect that actual VM
      * memory used by the cache could be significantly higher than the value
      * reported by this method.
      *
      * @return the size of the cache contents in bytes.
      */
+    @Deprecated
     int getCacheSize();
+
+    /**
+     * Returns the size of the cache contents in bytes. This value is only a
+     * rough approximation, so cache users should expect that actual VM
+     * memory used by the cache could be significantly higher than the value
+     * reported by this method.
+     *
+     * Attention: The default implementation of this method returns the cache value limited to integer size.
+     *
+     * @return the size of the cache contents in bytes.
+     */
+    default long getLongCacheSize(){
+        return getCacheSize();
+    }
 
     /**
      * Returns the number of cache hits. A cache hit occurs every
@@ -142,7 +183,7 @@ public interface Cache<K extends Serializable, V extends Serializable> extends j
     long getCacheMisses();
 
     /**
-     * <string>IMPORTANT:</string> Unlike the standard {@link Map#values()} implementation, the collection returned from
+     * <strong>IMPORTANT:</strong> Unlike the standard {@link Map#values()} implementation, the collection returned from
      * this method cannot be modified.
      *
      * @return an unmodifiable collection view of the values contained in this map
@@ -150,7 +191,7 @@ public interface Cache<K extends Serializable, V extends Serializable> extends j
     Collection<V> values();
 
     /**
-     * <string>IMPORTANT:</string> Unlike the standard {@link Map#entrySet()} implementation, the set returned from
+     * <strong>IMPORTANT:</strong> Unlike the standard {@link Map#entrySet()} implementation, the set returned from
      * this method cannot be modified.
      *
      * @return an unmodifiable set view of the mappings contained in this map
@@ -159,7 +200,7 @@ public interface Cache<K extends Serializable, V extends Serializable> extends j
     Set<Entry<K, V>> entrySet();
 
     /**
-     * <string>IMPORTANT:</string> Unlike the standard {@link Map#keySet()} implementation, the set returned from
+     * <strong>IMPORTANT:</strong> Unlike the standard {@link Map#keySet()} implementation, the set returned from
      * this method cannot be modified.
      *
      * @return an unmodifiable set view of the keys contained in this map
@@ -167,4 +208,39 @@ public interface Cache<K extends Serializable, V extends Serializable> extends j
     @Override
     Set<K> keySet();
 
+    /**
+     * Returns an existing {@link Lock} on the specified key or creates a new one
+     * if none was found. This operation is thread safe. Successive calls with the same key may or may not
+     * return the same {@link Lock}. However, different threads asking for the
+     * same Lock at the same time will get the same Lock object.
+     *
+     * <p>The supplied cache may or may not be used depending whether the server is running on cluster mode
+     * or not. When not running as part of a cluster then the lock will be unrelated to the cache and will
+     * only be visible in this JVM.
+     *
+     * @param key the object that defines the visibility or scope of the lock.
+     * @return an existing lock on the specified key or creates a new one if none was found.
+     */
+    @SuppressWarnings("deprecation")
+    default Lock getLock(final K key) {
+        return CacheFactory.getLock(key, this);
+    }
+
+    AtomicBoolean secretKey = new AtomicBoolean(false);
+    AtomicBoolean secretValue = new AtomicBoolean(false);
+    default void setSecretKey() {
+        this.secretKey.set(true);
+    }
+
+    default void setSecretValue() {
+        this.secretValue.set(true);
+    }
+
+    default boolean isKeySecret() {
+        return this.secretKey.get();
+    }
+
+    default boolean isValueSecret() {
+        return this.secretValue.get();
+    }
 }

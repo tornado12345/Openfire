@@ -1,20 +1,5 @@
 package org.jivesoftware.admin;
 
-import org.jivesoftware.Fixtures;
-import org.jivesoftware.openfire.admin.AdminManager;
-import org.jivesoftware.openfire.auth.AuthToken;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
-
-import javax.servlet.FilterChain;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import javax.servlet.http.HttpSession;
-
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThat;
@@ -24,6 +9,22 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+
+import javax.servlet.FilterChain;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+
+import org.jivesoftware.Fixtures;
+import org.jivesoftware.openfire.admin.AdminManager;
+import org.jivesoftware.openfire.auth.AuthToken;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnitRunner;
 
 @RunWith(MockitoJUnitRunner.class)
 public class AuthCheckFilterTest {
@@ -39,10 +40,15 @@ public class AuthCheckFilterTest {
     @Mock private AdminManager adminManager;
     @Mock private LoginLimitManager loginLimitManager;
 
-    @Before
-    public void setUp() throws Exception {
-
+    @BeforeClass
+    public static void setUpClass() throws Exception {
         Fixtures.reconfigureOpenfireHome();
+    }
+
+    @Before
+    public void setUp() {
+
+        Fixtures.clearExistingProperties();
 
         doReturn("/uri/to/page").when(request).getRequestURI();
         doReturn(httpSession).when(request).getSession();
@@ -77,7 +83,9 @@ public class AuthCheckFilterTest {
     @Test
     public void willNotRedirectARequestFromAnAdminUser() throws Exception {
 
-        final AuthCheckFilter filter = new AuthCheckFilter(adminManager, loginLimitManager, AdminUserServletAuthenticatorClass.class.getName());
+        AuthCheckFilter.SERVLET_REQUEST_AUTHENTICATOR.setValue(AdminUserServletAuthenticatorClass.class);
+
+        final AuthCheckFilter filter = new AuthCheckFilter(adminManager, loginLimitManager);
 
         filter.doFilter(request, response, filterChain);
 
@@ -92,7 +100,7 @@ public class AuthCheckFilterTest {
     @Test
     public void willRedirectARequestWithoutAServletRequestAuthenticator() throws Exception {
 
-        final AuthCheckFilter filter = new AuthCheckFilter(adminManager, loginLimitManager, "");
+        final AuthCheckFilter filter = new AuthCheckFilter(adminManager, loginLimitManager);
 
         filter.doFilter(request, response, filterChain);
 
@@ -102,7 +110,8 @@ public class AuthCheckFilterTest {
     @Test
     public void willRedirectARequestWithABrokenServletRequestAuthenticator() throws Exception {
 
-        final AuthCheckFilter filter = new AuthCheckFilter(adminManager, loginLimitManager, "this-is-not-a-class-name");
+        AuthCheckFilter.SERVLET_REQUEST_AUTHENTICATOR.setValue(BrokenUserServletAuthenticatorClass.class);
+        final AuthCheckFilter filter = new AuthCheckFilter(adminManager, loginLimitManager);
 
         filter.doFilter(request, response, filterChain);
 
@@ -112,7 +121,8 @@ public class AuthCheckFilterTest {
     @Test
     public void willRedirectARequestIfTheServletRequestAuthenticatorReturnsNoUser() throws Exception {
 
-        final AuthCheckFilter filter = new AuthCheckFilter(adminManager, loginLimitManager, NoUserServletAuthenticatorClass.class.getName());
+        AuthCheckFilter.SERVLET_REQUEST_AUTHENTICATOR.setValue(NoUserServletAuthenticatorClass.class);
+        final AuthCheckFilter filter = new AuthCheckFilter(adminManager, loginLimitManager);
 
         filter.doFilter(request, response, filterChain);
 
@@ -122,7 +132,8 @@ public class AuthCheckFilterTest {
     @Test
     public void willRedirectARequestIfTheServletRequestAuthenticatorReturnsAnUnauthorisedUser() throws Exception {
 
-        final AuthCheckFilter filter = new AuthCheckFilter(adminManager, loginLimitManager, NormalUserServletAuthenticatorClass.class.getName());
+        AuthCheckFilter.SERVLET_REQUEST_AUTHENTICATOR.setValue(NormalUserServletAuthenticatorClass.class);
+        final AuthCheckFilter filter = new AuthCheckFilter(adminManager, loginLimitManager);
 
         filter.doFilter(request, response, filterChain);
 
@@ -130,25 +141,27 @@ public class AuthCheckFilterTest {
     }
 
     @Test
-    public void willReturnTrueIfTheCorrectServletRequestAuthenticatorIsConfigured() throws Exception {
+    public void willReturnTrueIfTheCorrectServletRequestAuthenticatorIsConfigured() {
 
-        new AuthCheckFilter(adminManager, loginLimitManager, NormalUserServletAuthenticatorClass.class.getName());
+        new AuthCheckFilter(adminManager, loginLimitManager);
+        AuthCheckFilter.SERVLET_REQUEST_AUTHENTICATOR.setValue(NormalUserServletAuthenticatorClass.class);
 
         assertThat(AuthCheckFilter.isServletRequestAuthenticatorInstanceOf(NormalUserServletAuthenticatorClass.class), is(true));
     }
 
     @Test
-    public void willReturnFalseIfTheWrongServletRequestAuthenticatorIsConfigured() throws Exception {
+    public void willReturnFalseIfTheWrongServletRequestAuthenticatorIsConfigured() {
 
-        new AuthCheckFilter(adminManager, loginLimitManager, NormalUserServletAuthenticatorClass.class.getName());
+        AuthCheckFilter.SERVLET_REQUEST_AUTHENTICATOR.setValue(NormalUserServletAuthenticatorClass.class);
+        new AuthCheckFilter(adminManager, loginLimitManager);
 
         assertThat(AuthCheckFilter.isServletRequestAuthenticatorInstanceOf(AdminUserServletAuthenticatorClass.class), is(false));
     }
 
     @Test
-    public void willReturnFalseIfNoServletRequestAuthenticatorIsConfigured() throws Exception {
+    public void willReturnFalseIfNoServletRequestAuthenticatorIsConfigured() {
 
-        new AuthCheckFilter(adminManager, loginLimitManager, "");
+        new AuthCheckFilter(adminManager, loginLimitManager);
 
         assertThat(AuthCheckFilter.isServletRequestAuthenticatorInstanceOf(AdminUserServletAuthenticatorClass.class), is(false));
     }
@@ -171,6 +184,18 @@ public class AuthCheckFilterTest {
         @Override
         public String authenticateRequest(final HttpServletRequest request) {
             return null;
+        }
+    }
+
+    public static class BrokenUserServletAuthenticatorClass implements ServletRequestAuthenticator {
+
+        public BrokenUserServletAuthenticatorClass() {
+            throw new IllegalStateException();
+        }
+
+        @Override
+        public String authenticateRequest(final HttpServletRequest request) {
+            return adminUser;
         }
     }
 }

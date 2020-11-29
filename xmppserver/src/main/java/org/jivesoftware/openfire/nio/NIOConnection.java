@@ -28,6 +28,7 @@ import java.nio.charset.CharsetEncoder;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.Certificate;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -70,14 +71,13 @@ public class NIOConnection implements Connection {
     private LocalSession session;
     private IoSession ioSession;
 
-    private ConnectionCloseListener closeListener;
+    final private Map<ConnectionCloseListener, Object> closeListeners = new HashMap<>();
 
     /**
      * Deliverer to use when the connection is closed or was closed when delivering
      * a packet.
      */
     private PacketDeliverer backupDeliverer;
-    private boolean flashClient = false;
     private int majorVersion = 1;
     private int minorVersion = 0;
     private String language = null;
@@ -129,23 +129,18 @@ public class NIOConnection implements Connection {
     }
 
     @Override
-    public void registerCloseListener(ConnectionCloseListener listener, Object ignore) {
-        if (closeListener != null) {
-            throw new IllegalStateException("Close listener already configured");
-        }
+    public void registerCloseListener(ConnectionCloseListener listener, Object callback) {
         if (isClosed()) {
             listener.onConnectionClose(session);
         }
         else {
-            closeListener = listener;
+            closeListeners.put( listener, callback );
         }
     }
 
     @Override
     public void removeCloseListener(ConnectionCloseListener listener) {
-        if (closeListener == listener) {
-            closeListener = null;
-        }
+        closeListeners.remove( listener );
     }
 
     @Override
@@ -226,7 +221,7 @@ public class NIOConnection implements Connection {
             }
 
             try {
-                deliverRawText0(flashClient ? "</flash:stream>" : "</stream:stream>");
+                deliverRawText0("</stream:stream>");
             } catch (Exception e) {
                 Log.error("Failed to deliver stream close tag: " + e.getMessage());
             }
@@ -237,6 +232,7 @@ public class NIOConnection implements Connection {
                 Log.error("Exception while closing MINA session", e);
             }
             notifyCloseListeners(); // clean up session, etc.
+            closeListeners.clear();
         }
     }
 
@@ -252,11 +248,14 @@ public class NIOConnection implements Connection {
      * Used by subclasses to properly finish closing the connection.
      */
     private void notifyCloseListeners() {
-        if (closeListener != null) {
-            try {
-                closeListener.onConnectionClose(session);
-            } catch (Exception e) {
-                Log.error("Error notifying listener: " + closeListener, e);
+        for( final Map.Entry<ConnectionCloseListener, Object> entry : closeListeners.entrySet() )
+        {
+            if (entry.getKey() != null) {
+                try {
+                    entry.getKey().onConnectionClose(entry.getValue());
+                } catch (Exception e) {
+                    Log.error("Error notifying listener: " + entry.getKey(), e);
+                }
             }
         }
     }
@@ -271,6 +270,16 @@ public class NIOConnection implements Connection {
         session = owner;
         StanzaHandler stanzaHandler = getStanzaHandler();
         stanzaHandler.setSession(owner);
+
+        // ConnectionCloseListeners are registered with their session instance as a callback object. When re-initializing,
+        // this object needs to be replaced with the new session instance (or otherwise, the old session will be used
+        // during the callback. OF-2014
+        for ( final Map.Entry<ConnectionCloseListener, Object> entry : closeListeners.entrySet() )
+        {
+            if ( entry.getValue() instanceof LocalSession ) {
+                entry.setValue( owner );
+            }
+        }
     }
 
     protected StanzaHandler getStanzaHandler() {
@@ -298,9 +307,6 @@ public class NIOConnection implements Connection {
             buffer.setAutoExpand(true);
             try {
                 buffer.putString(packet.getElement().asXML(), encoder.get());
-                if (flashClient) {
-                    buffer.put((byte) '\0');
-                }
                 buffer.flip();
                 
                 ioSessionLock.lock();
@@ -341,9 +347,6 @@ public class NIOConnection implements Connection {
             //Charset charset = Charset.forName(CHARSET);
             //buffer.putString(text, charset.newEncoder());
             buffer.put(text.getBytes(StandardCharsets.UTF_8));
-            if (flashClient) {
-                buffer.put((byte) '\0');
-            }
             buffer.flip();
             ioSessionLock.lock();
             try {
@@ -410,15 +413,6 @@ public class NIOConnection implements Connection {
     public ConnectionConfiguration getConfiguration()
     {
         return configuration;
-    }
-
-    public boolean isFlashClient() {
-        return flashClient;
-    }
-
-    @Override
-    public void setFlashClient(boolean flashClient) {
-        this.flashClient = flashClient;
     }
 
     @Override

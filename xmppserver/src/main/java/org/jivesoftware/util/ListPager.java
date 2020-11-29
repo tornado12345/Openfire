@@ -21,7 +21,7 @@ import org.apache.commons.text.StringEscapeUtils;
  *
  * <p>
  * It is up to the caller of the class to specify the filter, if required, in the form of a
- * {@link java.util.function.Predicate<T> predicate}. To ensure that search parameters are maintained when paging through
+ * {@link java.util.function.Predicate predicate}. To ensure that search parameters are maintained when paging through
  * the list, it's also necessary to supply a list of input field identifiers that should be included as part of the
  * request when accessing another page. These field identifiers are used to extract the value of the field, and copy it
  * to a hidden form that is used for the actual submission. This means each search criteria has two form fields
@@ -69,7 +69,6 @@ public class ListPager<T> {
      * @param items                the list of items to display on the page
      * @param additionalFormFields 0 or more input field identifiers (<strong>NOT form field names</strong>) to include in requests for other pages
      */
-    @SuppressWarnings("WeakerAccess")
     public ListPager(final HttpServletRequest request, final HttpServletResponse response, final List<T> items, final String... additionalFormFields) {
         this(request, response, items, item -> true, additionalFormFields);
     }
@@ -245,14 +244,17 @@ public class ListPager<T> {
             .append(String.format("\t<input type='hidden' name='%s' value='%d'>\n", REQUEST_PARAMETER_KEY_CURRENT_PAGE, currentPage));
         for (final String additionalFormField : additionalFormFields) {
             final String formFieldValue = ParamUtils.getStringParameter(request, additionalFormField, "");
-            sb.append(String.format("\t<input type='hidden' name='%s' value='%s'%s>\n", additionalFormField, StringEscapeUtils.escapeHtml4(formFieldValue), formFieldValue.isEmpty() ? " disabled" : ""));
+            sb.append(String.format("\t<input type='hidden' name='%s' value='%s'%s>\n",
+                additionalFormField,
+                StringEscapeUtils.escapeXml11(formFieldValue),
+                formFieldValue.isEmpty() ? " disabled" : ""));
         }
         return sb.toString();
     }
 
     /**
      * @param request The request to retrieve the values from
-     * @param prefix The first char of the query string - either `?` or `&`
+     * @param prefix The first char of the query string - either `?` or `&amp;`
      * @param additionalFormFields 0 or more form field names to include in requests for other pages
      * @return a query string required to maintain the current list pager state
      */

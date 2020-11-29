@@ -16,12 +16,17 @@
 
 package org.jivesoftware.util;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.servlet.http.HttpServletRequest;
 
 /**
  * Assists JSP writers in getting parameters and attributes.
  */
 public class ParamUtils {
+
+    private static final Logger Log = LoggerFactory.getLogger(ParamUtils.class);
 
     /**
      * Returns a parameter as a string.
@@ -67,6 +72,7 @@ public class ParamUtils {
      * Returns a list of parameters of the same name
      *
      * @param request an HttpServletRequest object.
+     * @param name the name of the parameter you want to get
      * @return an array of non-null, non-blank strings of the same name. This
      *         method will return an empty array if no parameters were found.
      */
@@ -128,6 +134,7 @@ public class ParamUtils {
      * @param request the HttpServletRequest object, known as "request" in a
      *      JSP page.
      * @param name the name of the parameter you want to get
+     * @param defaultVal the default value if the parameter is not present
      * @return true if the value of the parameter was "true", false otherwise.
      */
     public static boolean getBooleanParameter(HttpServletRequest request,
@@ -151,6 +158,7 @@ public class ParamUtils {
      * @param request the HttpServletRequest object, known as "request" in a
      *      JSP page.
      * @param name the name of the parameter you want to get
+     * @param defaultNum the default value if the parameter is not present/could not be parsed
      * @return the int value of the parameter specified or the default value if
      *      the parameter is not found.
      */
@@ -162,7 +170,8 @@ public class ParamUtils {
             try {
                 num = Integer.parseInt(temp);
             }
-            catch (Exception ignored) {
+            catch (Exception ex) {
+                Log.trace("An exception occurred while trying to parse parameter '{}' value '{}' as an integer. Will return default value '{}'", name, temp, defaultNum, ex);
             }
             return num;
         }
@@ -179,6 +188,7 @@ public class ParamUtils {
      * @param name the name of the parameter you want to get
      * @param defaultNum the default value of a parameter, if the parameter
      *      can't be converted into an int.
+     * @return an array of integers
      */
     public static int[] getIntParameters(HttpServletRequest request,
                                          String name, int defaultNum) {
@@ -204,6 +214,7 @@ public class ParamUtils {
      * @param request the HttpServletRequest object, known as "request" in a
      *      JSP page.
      * @param name the name of the parameter you want to get
+     * @param defaultNum the default value if the parameter is not present/could not be parsed
      * @return the double value of the parameter specified or the default value
      *      if the parameter is not found.
      */
@@ -214,7 +225,8 @@ public class ParamUtils {
             try {
                 num = Double.parseDouble(temp);
             }
-            catch (Exception ignored) {
+            catch (Exception ex) {
+                Log.trace("An exception occurred while trying to parse parameter '{}' value '{}' as a double. Will return default value '{}'", name, temp, defaultNum, ex);
             }
             return num;
         }
@@ -229,6 +241,8 @@ public class ParamUtils {
      * @param request the HttpServletRequest object, known as "request" in a
      *      JSP page.
      * @param name the name of the parameter you want to get
+     * @param defaultNum the default value of a parameter, if the parameter
+     *      can't be converted into a long.
      * @return the long value of the parameter specified or the default value if
      *      the parameter is not found.
      */
@@ -239,7 +253,8 @@ public class ParamUtils {
             try {
                 num = Long.parseLong(temp);
             }
-            catch (Exception ignored) {
+            catch (Exception ex) {
+                Log.trace("An exception occurred while trying to parse parameter '{}' value '{}' as a long. Will return default value '{}'", name, temp, defaultNum, ex);
             }
             return num;
         }
@@ -256,6 +271,7 @@ public class ParamUtils {
      * @param name the name of the parameter you want to get
      * @param defaultNum the default value of a parameter, if the parameter
      *      can't be converted into a long.
+     * @return an array of long parameters
      */
     public static long[] getLongParameters(HttpServletRequest request, String name,
             long defaultNum)
@@ -336,6 +352,7 @@ public class ParamUtils {
      *
      * @param request the HttpServletRequest object, known as "request" in a JSP page.
      * @param name the name of the attribute you want to get.
+     * @param defaultNum the default value if the attribute is not present/cannot be parsed
      * @return the int value of the attribute or the default value if the
      *      attribute is not found or is a zero length string.
      */
@@ -346,7 +363,8 @@ public class ParamUtils {
             try {
                 num = Integer.parseInt(temp);
             }
-            catch (Exception ignored) {
+            catch (Exception ex) {
+                Log.trace("An exception occurred while trying to parse attribute '{}' value '{}' as an integer. Will return default value '{}'", name, temp, defaultNum, ex);
             }
             return num;
         }
@@ -360,6 +378,7 @@ public class ParamUtils {
      *
      * @param request the HttpServletRequest object, known as "request" in a JSP page.
      * @param name the name of the attribute you want to get.
+     * @param defaultNum the default value if the attribute is not present/cannot be parsed
      * @return the long value of the attribute or the default value if the
      *      attribute is not found or is a zero length string.
      */
@@ -370,7 +389,8 @@ public class ParamUtils {
             try {
                 num = Long.parseLong(temp);
             }
-            catch (Exception ignored) {
+            catch (Exception ex) {
+                Log.trace("An exception occurred while trying to parse attribute '{}' value '{}' as a long. Will return default value '{}'", name, temp, defaultNum, ex);
             }
             return num;
         }

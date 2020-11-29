@@ -38,8 +38,8 @@ import org.slf4j.LoggerFactory;
  * local user accounts as needed. To enable this provider, set system properties as follows:
  *
  * <ul>
- * <li><tt>provider.auth.className = org.jivesoftware.openfire.auth.POP3AuthProvider</tt></li>
- * <li><tt>provider.user.className = org.jivesoftware.openfire.user.POP3UserProvider</tt></li>
+ * <li>{@code provider.auth.className = org.jivesoftware.openfire.auth.POP3AuthProvider}</li>
+ * <li>{@code provider.user.className = org.jivesoftware.openfire.user.POP3UserProvider}</li>
  * </ul>
  *
  * The properties to configure the provider are as follows:
@@ -120,7 +120,7 @@ public class POP3AuthProvider implements AuthProvider {
             Log.debug("\t authRequiresDomain: " + authRequiresDomain);
             Log.debug("\t authCacheEnabled: " + (authCache != null));
             if (authCache != null) {
-                Log.debug("\t authCacheSize: " + authCache.getCacheSize());
+                Log.debug("\t authCacheSize: " + authCache.getLongCacheSize());
                 Log.debug("\t authCacheMaxLifetime: " + authCache.getMaxLifetime());
             }
         }

@@ -203,19 +203,18 @@ public class PresenceSubscribeHandler extends BasicModule implements ChannelHand
                     }
 
                     if (type == Presence.Type.subscribed) {
-                        // Send the presence of the local user to the remote user. The remote user
-                        // subscribed to the presence of the local user and the local user accepted
+                        // Send the presence of the newly subscribed contact to the subscribee, by doing a presence probe.
                         JID prober = localServer.isLocal(recipientJID) ? recipientJID.asBareJID() : recipientJID;
-                        if (presenceManager.canProbePresence(prober, senderJID.getNode())){
-                            presenceManager.probePresence(prober, senderJID);
-                            PresenceEventDispatcher.subscribedToPresence(recipientJID, senderJID);
-                        }
-                        else {
+                        if (localServer.isLocal(senderJID) && !presenceManager.canProbePresence(prober, senderJID.getNode())){
                             Presence nonProbablePresence = new Presence();
                             nonProbablePresence.setStatus("unavailable");
                             nonProbablePresence.setFrom(senderJID);
                             nonProbablePresence.setTo(recipientJID);
                             presenceManager.handleProbe(nonProbablePresence);
+                        }
+                        else {
+                            presenceManager.probePresence(prober, senderJID);
+                            PresenceEventDispatcher.subscribedToPresence(recipientJID, senderJID);
                         }
                     }
                 }
@@ -250,7 +249,7 @@ public class PresenceSubscribeHandler extends BasicModule implements ChannelHand
     private Roster getRoster(JID address) {
         String username;
         Roster roster = null;
-        if (localServer.isLocal(address) && userManager.isRegisteredUser(address.getNode())) {
+        if (userManager.isRegisteredUser(address, false)) {
             username = address.getNode();
             try {
                 roster = rosterManager.getRoster(username);
@@ -271,7 +270,7 @@ public class PresenceSubscribeHandler extends BasicModule implements ChannelHand
      * @param isSending True if the request is being sent by the owner
      * @param type      The subscription change type (subscribe, unsubscribe, etc.)
      * @param roster    The Roster that is updated.
-     * @return <tt>true</tt> if the subscription state has changed.
+     * @return {@code true} if the subscription state has changed.
      */
     private boolean manageSub(JID target, boolean isSending, Presence.Type type, Roster roster)
             throws UserAlreadyExistsException, SharedGroupException
@@ -497,7 +496,7 @@ public class PresenceSubscribeHandler extends BasicModule implements ChannelHand
      * Determine the changes to apply to the item, according to its subscription state.
      * The method also turns the action and sending status into an integer code
      * for easier processing (switch statements).
-     * <p/>
+     * <p>
      * Code relies on states being in numerical order without skipping.
      * In addition, the receive states must parallel the send states
      * so that (send state X) + STATE_RECV_SUBSCRIBE == (receive state X)

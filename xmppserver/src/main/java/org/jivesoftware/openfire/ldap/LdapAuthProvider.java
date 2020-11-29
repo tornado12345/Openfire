@@ -16,8 +16,6 @@
 
 package org.jivesoftware.openfire.ldap;
 
-import javax.naming.CommunicationException;
-
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.auth.AuthProvider;
 import org.jivesoftware.openfire.auth.UnauthorizedException;
@@ -30,6 +28,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xmpp.packet.JID;
 
+import javax.naming.CommunicationException;
+import javax.naming.ldap.Rdn;
+
 /**
  * Implementation of auth provider interface for LDAP authentication service plug-in.
  * Only plaintext authentication is currently supported.<p>
@@ -39,10 +40,10 @@ import org.xmpp.packet.JID;
  * This can decrease load on the directory and preserve some level of service even
  * when the directory becomes unavailable for a period of time.<ul>
  *
- *  <li><tt>ldap.authCache.enabled</tt> -- true to enable the auth cache.</li>
- *  <li><tt>ldap.authCache.size</tt> -- size in bytes of the auth cache. If property is
+ *  <li>{@code ldap.authCache.enabled} -- true to enable the auth cache.</li>
+ *  <li>{@code ldap.authCache.size} -- size in bytes of the auth cache. If property is
  *      not set, the default value is 524288 (512 K).</li>
- *  <li><tt>ldap.authCache.maxLifetime</tt> -- maximum amount of time a hashed password
+ *  <li>{@code ldap.authCache.maxLifetime} -- maximum amount of time a hashed password
  *      can be cached in milleseconds. If property is not set, the default value is
  *      7200000 (2 hours).</li>
  * </ul>
@@ -96,7 +97,7 @@ public class LdapAuthProvider implements AuthProvider {
             }
         }
 
-        String userDN;
+        Rdn[] userRDN;
         try {
             // The username by itself won't help us much with LDAP since we
             // need a fully qualified dn. We could make the assumption that
@@ -109,10 +110,10 @@ public class LdapAuthProvider implements AuthProvider {
             // sub-tree searching). So, if the baseDN is set to
             // "o=jivesoftware, o=com" then a search will include the "People"
             // node as well all the others under the base.
-            userDN = manager.findUserDN(username);
+            userRDN = manager.findUserRDN(username);
 
             // See if the user authenticates.
-            if (!manager.checkAuthentication(userDN, password)) {
+            if (!manager.checkAuthentication(userRDN, password)) {
                 throw new UnauthorizedException("Username and password don't match");
             }
         }

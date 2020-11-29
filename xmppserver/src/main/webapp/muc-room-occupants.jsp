@@ -21,6 +21,7 @@
                  org.jivesoftware.util.ParamUtils,
                  org.jivesoftware.util.StringUtils,
                  org.jivesoftware.util.CookieUtils,
+                 org.jivesoftware.util.JiveGlobals,
                  java.net.URLEncoder,
                  java.text.DateFormat"
     errorPage="error.jsp"
@@ -28,6 +29,8 @@
 <%@ page import="org.jivesoftware.openfire.XMPPServer" %>
 <%@ page import="org.jivesoftware.openfire.muc.NotAllowedException" %>
 <%@ page import="org.xmpp.packet.JID" %>
+<%@ page import="org.jivesoftware.openfire.cluster.ClusterManager" %>
+<%@ page import="org.jivesoftware.openfire.muc.spi.RemoteMUCRole" %>
 
 <%@ taglib uri="http://java.sun.com/jsp/jstl/core" prefix="c"%>
 <%@ taglib uri="http://java.sun.com/jsp/jstl/fmt" prefix="fmt" %>
@@ -61,10 +64,11 @@
 
     // Kick nick specified
     if (kick != null) {
+        String consoleKickReason = JiveGlobals.getProperty("admin.mucRoom.consoleKickReason", null);
         MUCRole role = room.getOccupant(nickName);
         if (role != null) {
             try {
-                room.kickOccupant(role.getUserAddress(), XMPPServer.getInstance().createJID(webManager.getUser().getUsername(), null), null, "");
+                room.kickOccupant(role.getUserAddress(), XMPPServer.getInstance().createJID(webManager.getUser().getUsername(), null), null, consoleKickReason);
                 // Log the event
                 webManager.logEvent("kicked MUC occupant "+nickName+" from "+roomName, null);
                 // Done, so redirect
@@ -78,6 +82,8 @@
             }
         }
     }
+
+    final boolean clusteringEnabled = ClusterManager.isClusteringStarted() || ClusterManager.isClusteringStarting();
 
     // Formatter for dates
     DateFormat dateFormatter = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT);
@@ -163,6 +169,9 @@
             <th scope="col"><fmt:message key="muc.room.occupants.nickname" /></th>
             <th scope="col"><fmt:message key="muc.room.occupants.role" /></th>
             <th scope="col"><fmt:message key="muc.room.occupants.affiliation" /></th>
+            <% if (clusteringEnabled) { %>
+            <th scope="col"><fmt:message key="muc.room.occupants.node" /></th>
+            <% } %>
             <th scope="col"><fmt:message key="muc.room.occupants.kick" /></th>
         </tr>
     </thead>
@@ -173,6 +182,16 @@
             <td><%= StringUtils.escapeHTMLTags(role.getNickname().toString()) %></td>
             <td><%= StringUtils.escapeHTMLTags(role.getRole().toString()) %></td>
             <td><%= StringUtils.escapeHTMLTags(role.getAffiliation().toString()) %></td>
+            <% if (clusteringEnabled) { %>
+            <td><div title="<fmt:message key="muc.room.occupants.cluster-node" />: <%= StringUtils.escapeHTMLTags(role.getNodeID().toString()) %>">
+            <% if (role instanceof RemoteMUCRole) { %>
+                    <fmt:message key="muc.room.occupants.remote" />
+            <%    } else { %>
+                    <fmt:message key="muc.room.occupants.local" />
+            <%    } %>
+            </div></td>
+            <% } %>
+
             <td><a href="muc-room-occupants.jsp?roomJID=<%= URLEncoder.encode(room.getJID().toBareJID(), "UTF-8") %>&nickName=<%= URLEncoder.encode(role.getNickname(), "UTF-8") %>&kick=1&csrf=${csrf}" title="<fmt:message key="muc.room.occupants.kick"/>"><img src="images/delete-16x16.gif" alt="<fmt:message key="muc.room.occupants.kick"/>" border="0" width="16" height="16"/></a></td>
         </tr>
         <% } %>

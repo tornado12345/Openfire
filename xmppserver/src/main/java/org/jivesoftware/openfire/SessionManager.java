@@ -17,17 +17,19 @@
 package org.jivesoftware.openfire;
 
 import java.net.UnknownHostException;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
+import java.util.stream.Collectors;
 
 import org.jivesoftware.openfire.audit.AuditStreamIDFactory;
 import org.jivesoftware.openfire.auth.AuthToken;
 import org.jivesoftware.openfire.auth.UnauthorizedException;
 import org.jivesoftware.openfire.cluster.ClusterEventListener;
 import org.jivesoftware.openfire.cluster.ClusterManager;
-import org.jivesoftware.openfire.component.InternalComponentManager;
+import org.jivesoftware.openfire.cluster.NodeID;
 import org.jivesoftware.openfire.container.BasicModule;
 import org.jivesoftware.openfire.event.SessionEventDispatcher;
 import org.jivesoftware.openfire.http.HttpConnection;
@@ -43,6 +45,7 @@ import org.jivesoftware.util.SystemProperty;
 import org.jivesoftware.util.TaskEngine;
 import org.jivesoftware.util.cache.Cache;
 import org.jivesoftware.util.cache.CacheFactory;
+import org.jivesoftware.util.cache.CacheUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xmpp.packet.JID;
@@ -57,8 +60,8 @@ import org.xmpp.packet.Presence;
  *
  * @author Derek DeMoro
  */
-public class SessionManager extends BasicModule implements ClusterEventListener/*, ServerItemsProvider, DiscoInfoProvider, DiscoItemsProvider */{
-
+public class SessionManager extends BasicModule implements ClusterEventListener
+{
     private static final Logger Log = LoggerFactory.getLogger(SessionManager.class);
     private static final SystemProperty<Integer> CONFLICT_LIMIT = SystemProperty.Builder.ofType(Integer.class)
         .setKey("xmpp.session.conflict-limit")
@@ -70,6 +73,8 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
     public static final String COMPONENT_SESSION_CACHE_NAME = "Components Sessions";
     public static final String CM_CACHE_NAME = "Connection Managers Sessions";
     public static final String ISS_CACHE_NAME = "Incoming Server Sessions";
+    public static final String HOSTNAME_SESSIONS_CACHE_NAME = "Sessions by Hostname";
+    public static final String VALIDATED_DOMAINS_CACHE_NAME = "Validated Domains";
     public static final String C2S_INFO_CACHE_NAME = "Client Session Info Cache";
 
     public static final int NEVER_KICK = -1;
@@ -94,27 +99,31 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
      * a resource has been bound). The cache is used by Remote sessions to avoid generating big
      * number of remote calls.
      * Key: full JID, Value: ClientSessionInfo
+     *
+     * Note that, unlike other caches, this cache is populated only when clustering is enabled.
      */
     private Cache<String, ClientSessionInfo> sessionInfoCache;
 
     /**
      * Cache (unlimited, never expire) that holds external component sessions.
-     * Key: component address, Value: nodeID
+     * Key: component address, Value: identifier of each cluster node holding a local session
+     * to the component.
      */
-    private Cache<String, byte[]> componentSessionsCache;
+    private Cache<String, HashSet<NodeID>> componentSessionsCache;
 
     /**
      * Cache (unlimited, never expire) that holds sessions of connection managers. For each
      * socket connection of the CM to the server there is going to be an entry in the cache.
      * Key: full address of the CM that identifies the socket, Value: nodeID
      */
-    private Cache<String, byte[]> multiplexerSessionsCache;
+    private Cache<String, NodeID> multiplexerSessionsCache;
 
     /**
      * Cache (unlimited, never expire) that holds incoming sessions of remote servers.
      * Key: stream ID that identifies the socket/session, Value: nodeID
      */
-    private Cache<StreamID, byte[]> incomingServerSessionsCache;
+    private Cache<StreamID, NodeID> incomingServerSessionsCache;
+
     /**
      * Cache (unlimited, never expire) that holds list of incoming sessions
      * originated from the same remote server (domain/subdomain). For instance, jabber.org
@@ -139,7 +148,6 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
     private Cache<StreamID, HashSet<String>> validatedDomainsCache;
 
     private ClientSessionListener clientSessionListener = new ClientSessionListener();
-    private ComponentSessionListener componentSessionListener = new ComponentSessionListener();
     private IncomingServerSessionListener incomingServerListener = new IncomingServerSessionListener();
     private OutgoingServerSessionListener outgoingServerListener = new OutgoingServerSessionListener();
     private ConnectionMultiplexerSessionListener multiplexerSessionListener = new ConnectionMultiplexerSessionListener();
@@ -192,7 +200,19 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
      * @param localSession the LocalSession (this) to mark as detached.
      */
     public void addDetached(LocalSession localSession) {
+        Log.trace( "Marking session '{}' ({}) as detached.", localSession.getAddress(), localSession.getStreamID() );
         this.detachedSessions.put(localSession.getStreamID(), localSession);
+    }
+
+    /**
+     * Checks if a session is currently in the detached state (ie, has no connection,
+     * but has not been formally closed yet either).
+     *
+     * @param localSession A session
+     * @return true if the session is currently in 'detached' state, otherwise 'false'.
+     */
+    public boolean isDetached(LocalSession localSession) {
+        return this.detachedSessions.containsKey(localSession.getStreamID());
     }
 
     /**
@@ -205,12 +225,13 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
     public synchronized void removeDetached(LocalSession localSession) {
         LocalSession other = this.detachedSessions.get(localSession.getStreamID());
         if (other == localSession) {
+            Log.trace( "Removing detached session '{}' ({}).", localSession.getAddress(), localSession.getStreamID() );
             this.detachedSessions.remove(localSession.getStreamID());
         }
     }
 
     /**
-     * Returns the session originated from the specified address or <tt>null</tt> if none was
+     * Returns the session originated from the specified address or {@code null} if none was
      * found. The specified address MUST contain a resource that uniquely identifies the session.
      *
      * A single connection manager should connect to the same node.
@@ -224,9 +245,9 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
                 localSessionManager.getConnnectionManagerSessions().get(address.toString());
         if (session == null && server.getRemoteSessionLocator() != null) {
             // Search in the list of CMs connected to other cluster members
-            byte[] nodeID = multiplexerSessionsCache.get(address.toString());
+            final NodeID nodeID = multiplexerSessionsCache.get(address.toString());
             if (nodeID != null) {
-                return server.getRemoteSessionLocator().getConnectionMultiplexerSession(nodeID, address);
+                return server.getRemoteSessionLocator().getConnectionMultiplexerSession(nodeID.toByteArray(), address);
             }
         }
         return null;
@@ -244,9 +265,9 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         // Add sessions of CMs connected to other cluster nodes
         RemoteSessionLocator locator = server.getRemoteSessionLocator();
         if (locator != null) {
-            for (Map.Entry<String, byte[]> entry : multiplexerSessionsCache.entrySet()) {
+            for (Map.Entry<String, NodeID> entry : multiplexerSessionsCache.entrySet()) {
                 if (!server.getNodeID().equals(entry.getValue())) {
-                    sessions.add(locator.getConnectionMultiplexerSession(entry.getValue(), new JID(entry.getKey())));
+                    sessions.add(locator.getConnectionMultiplexerSession(entry.getValue().toByteArray(), new JID(entry.getKey())));
                 }
             }
         }
@@ -274,12 +295,12 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         // Add sessions of CMs connected to other cluster nodes
         RemoteSessionLocator locator = server.getRemoteSessionLocator();
         if (locator != null) {
-            for (Map.Entry<String, byte[]> entry : multiplexerSessionsCache.entrySet()) {
+            for (Map.Entry<String, NodeID> entry : multiplexerSessionsCache.entrySet()) {
                 if (!server.getNodeID().equals(entry.getValue())) {
                     JID jid = new JID(entry.getKey());
                     if (domain.equals(jid.getDomain())) {
                         sessions.add(
-                                locator.getConnectionMultiplexerSession(entry.getValue(), new JID(entry.getKey())));
+                                locator.getConnectionMultiplexerSession(entry.getValue().toByteArray(), new JID(entry.getKey())));
                     }
                 }
             }
@@ -288,7 +309,7 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
     }
 
     /**
-     * Creates a new <tt>ConnectionMultiplexerSession</tt>.
+     * Creates a new {@code ConnectionMultiplexerSession}.
      *
      * @param conn the connection to create the session from.
      * @param address the JID (may include a resource) of the connection manager's session.
@@ -309,7 +330,7 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         boolean firstConnection = getConnectionMultiplexerSessions(address.getDomain()).isEmpty();
         localSessionManager.getConnnectionManagerSessions().put(address.toString(), session);
         // Keep track of the cluster node hosting the new CM connection
-        multiplexerSessionsCache.put(address.toString(), server.getNodeID().toByteArray());
+        multiplexerSessionsCache.put(address.toString(), server.getNodeID());
         if (firstConnection) {
             // Notify ConnectionMultiplexerManager that a new connection manager
             // is available
@@ -328,7 +349,7 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
     }
 
     /**
-     * Creates a new <tt>ClientSession</tt>. The new Client session will have a newly created
+     * Creates a new {@code ClientSession}. The new Client session will have a newly created
      * stream ID.
      *
      * @param conn the connection to create the session from.
@@ -340,7 +361,7 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
     }
 
     /**
-     * Creates a new <tt>ClientSession</tt> with the specified streamID.
+     * Creates a new {@code ClientSession} with the specified streamID.
      *
      * @param conn the connection to create the session from.
      * @param id the streamID to use for the new session.
@@ -351,7 +372,7 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
     }
 
     /**
-     * Creates a new <tt>ClientSession</tt> with the specified streamID.
+     * Creates a new {@code ClientSession} with the specified streamID.
      *
      * @param conn the connection to create the session from.
      * @param id the streamID to use for the new session.
@@ -377,11 +398,14 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
     }
 
     /**
-     * Creates a new <tt>ClientSession</tt> with the specified streamID.
+     * Creates a new {@code ClientSession} with the specified streamID.
      *
      * @param connection the connection to create the session from.
      * @param id the streamID to use for the new session.
+     * @param language The language to use for the session
      * @return a newly created session.
+     * @throws UnauthorizedException if the server has not been initialised
+     * @throws UnknownHostException if no IP address for the peer could be found,
      */
     public HttpSession createClientHttpSession(StreamID id, HttpConnection connection, Locale language)
         throws UnauthorizedException, UnknownHostException
@@ -406,17 +430,26 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         StreamID id = nextStreamID();
         LocalComponentSession session = new LocalComponentSession(serverName, conn, id);
         conn.init(session);
-        // Register to receive close notification on this session so we can
-        // remove the external component from the list of components
-        conn.registerCloseListener(componentSessionListener, session);
+
         // Set the bind address as the address of the session
         session.setAddress(address);
 
         // Add to component session.
         localSessionManager.getComponentsSessions().add(session);
+
         // Keep track of the cluster node hosting the new external component
-        componentSessionsCache.put(address.toString(), server.getNodeID().toByteArray());
+        CacheUtil.addValueToMultiValuedCache( componentSessionsCache, address.toString(), server.getNodeID(), HashSet::new );
+
         return session;
+    }
+
+    public void removeComponentSession( LocalComponentSession session )
+    {
+        // Remove the session
+        localSessionManager.getComponentsSessions().remove(session);
+
+        // Remove track of the cluster node hosting the external component.
+        CacheUtil.removeValueFromMultiValuedCache( componentSessionsCache, session.getAddress().toString(), server.getNodeID() );
     }
 
     /**
@@ -425,6 +458,7 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
      *
      * @param conn the connection to the remote server.
      * @param id the stream ID used in the stream element when authenticating the server.
+     * @param fromDomain The originating domain
      * @return the newly created {@link IncomingServerSession}.
      * @throws UnauthorizedException if the local server has not been initialized yet.
      */
@@ -469,11 +503,11 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         StreamID streamID = session.getStreamID();
         localSessionManager.addIncomingServerSessions(streamID, session);
         // Keep track of the nodeID hosting the incoming server session
-        incomingServerSessionsCache.put(streamID, server.getNodeID().toByteArray());
+        incomingServerSessionsCache.put(streamID, server.getNodeID());
         // Update list of sockets/sessions coming from the same remote hostname
-        Lock lock = CacheFactory.getLock(hostname, hostnameSessionsCache);
+        Lock lock = hostnameSessionsCache.getLock(hostname);
+        lock.lock();
         try {
-            lock.lock();
             ArrayList<StreamID> streamIDs = hostnameSessionsCache.get(hostname);
             if (streamIDs == null) {
                 streamIDs = new ArrayList<>();
@@ -485,9 +519,9 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
             lock.unlock();
         }
         // Add to clustered cache
-        lock = CacheFactory.getLock(streamID, validatedDomainsCache);
+        lock = validatedDomainsCache.getLock(streamID);
+        lock.lock();
         try {
-            lock.lock();
             HashSet<String> validatedDomains = validatedDomainsCache.get(streamID);
             if (validatedDomains == null) {
                 validatedDomains = new HashSet<>();
@@ -514,41 +548,36 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         // Remove track of the nodeID hosting the incoming server session
         incomingServerSessionsCache.remove(streamID);
 
-        // Remove from list of sockets/sessions coming from the remote hostname
-        Lock lock = CacheFactory.getLock(hostname, hostnameSessionsCache);
-        try {
-            lock.lock();
-            ArrayList<StreamID> streamIDs = hostnameSessionsCache.get(hostname);
-            if (streamIDs != null) {
-                streamIDs.remove(streamID);
-                if (streamIDs.isEmpty()) {
-                    hostnameSessionsCache.remove(hostname);
-                }
-                else {
-                    hostnameSessionsCache.put(hostname, streamIDs);
-                }
-            }
-        }
-        finally {
-            lock.unlock();
-        }
-        // Remove from clustered cache
-        lock = CacheFactory.getLock(streamID, validatedDomainsCache);
-        try {
-            lock.lock();
-            HashSet<String> validatedDomains = validatedDomainsCache.get(streamID);
-            if (validatedDomains == null) {
-                validatedDomains = new HashSet<>();
-            }
-            validatedDomains.remove(hostname);
-            if (!validatedDomains.isEmpty()) {
-                validatedDomainsCache.put(streamID, validatedDomains);
-            }
-            else {
-                validatedDomainsCache.remove(streamID);
-            }
-        } finally {
-            lock.unlock();
+        unregisterIncomingServerSession( Collections.singleton( streamID ) );
+    }
+
+    /**
+     * One or more incoming server session can become unavailable for a number of reasons:
+     * <ul>
+     *     <li>It's connection got terminated.</li>
+     *     <li>The cluster node on which it is connected become disconnected</li>
+     * </ul>
+     *
+     * When a incoming server session is unavailable, a cleanup of associated
+     * metadata is needed.
+     *
+     * This method removes metadata from the following caches, based on the
+     * stream identifiers of incoming server sessions:
+     * <ul>
+     *     <li>'sockets/sessions coming from the same remote hostname'</li>
+     *     <li>'validated domains'</li>
+     * </ul>
+     *
+     * @param streamIDs References to incoming server sessions that are no longer available (cannot be null, can be empty).
+     */
+    private void unregisterIncomingServerSession( final Collection<StreamID> streamIDs )
+    {
+        // Update the collection of 'sockets/sessions coming from the same remote hostname' as well as the collection of 'validated domains' to reflect the loss of incoming server sessions.
+        for ( final StreamID streamID : streamIDs )
+        {
+            final Map<Boolean, Map<String, ArrayList<StreamID>>> modifiedHostnameSessions = CacheUtil.removeValueFromMultiValuedCache( hostnameSessionsCache, streamID );
+            final Set<String> removedHostnameSessions = modifiedHostnameSessions.get( false ).keySet();
+            removedHostnameSessions.forEach( removedHostname -> CacheUtil.removeValueFromMultiValuedCache( validatedDomainsCache, removedHostname ) );
         }
     }
 
@@ -565,9 +594,9 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
      * @return domains, subdomains and virtual hosts that where validated.
      */
     public Collection<String> getValidatedDomains(StreamID streamID) {
-        Lock lock = CacheFactory.getLock(streamID, validatedDomainsCache);
+        Lock lock = validatedDomainsCache.getLock(streamID);
+        lock.lock();
         try {
-            lock.lock();
             Set<String> validatedDomains = validatedDomainsCache.get(streamID);
             if (validatedDomains == null) {
                 return Collections.emptyList();
@@ -663,6 +692,8 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
     }
 
     /**
+     * @param originatingResource The JID broadcasting the presence
+     * @param presence The presence to broadcast
      * @deprecated Use {@link #broadcastPresenceToResources(JID, Presence)} instead.
      */
     @Deprecated
@@ -710,7 +741,7 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         if (session.getAddress() != null && routingTable != null &&
                 session.getAddress().toBareJID().trim().length() != 0) {
             // Update route to unavailable session (anonymous or not)
-            routingTable.addClientRoute(session.getAddress(), session);
+            routingTable.removeClientRoute(session.getAddress());
         }
     }
 
@@ -875,9 +906,9 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
     public List<IncomingServerSession> getIncomingServerSessions(String hostname) {
         List<StreamID> streamIDs;
         // Get list of sockets/sessions coming from the remote hostname
-        Lock lock = CacheFactory.getLock(hostname, hostnameSessionsCache);
+        Lock lock = hostnameSessionsCache.getLock(hostname);
+        lock.lock();
         try {
-            lock.lock();
             streamIDs = hostnameSessionsCache.get(hostname);
         }
         finally {
@@ -896,9 +927,9 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
                 RemoteSessionLocator locator = server.getRemoteSessionLocator();
                 if (session == null && locator != null) {
                     // Get the node hosting this session
-                    byte[] nodeID = incomingServerSessionsCache.get(streamID);
+                    NodeID nodeID = incomingServerSessionsCache.get(streamID);
                     if (nodeID != null) {
-                        session = locator.getIncomingServerSession(nodeID, streamID);
+                        session = locator.getIncomingServerSession(nodeID.toByteArray(), streamID);
                     }
                 }
                 if (session != null) {
@@ -1030,9 +1061,11 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         // Add sessions of external components connected to other cluster nodes
         RemoteSessionLocator locator = server.getRemoteSessionLocator();
         if (locator != null) {
-            for (Map.Entry<String, byte[]> entry : componentSessionsCache.entrySet()) {
-                if (!server.getNodeID().equals(entry.getValue())) {
-                    sessions.add(locator.getComponentSession(entry.getValue(), new JID(entry.getKey())));
+            for (Map.Entry<String, HashSet<NodeID>> entry : componentSessionsCache.entrySet()) {
+                for (NodeID nodeID : entry.getValue()) {
+                    if (!server.getNodeID().equals(nodeID)) {
+                        sessions.add(locator.getComponentSession(nodeID.toByteArray(), new JID(entry.getKey())));
+                    }
                 }
             }
         }
@@ -1055,9 +1088,12 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         // Search in the external components connected to other cluster nodes
         RemoteSessionLocator locator = server.getRemoteSessionLocator();
         if (locator != null) {
-            byte[] nodeID = componentSessionsCache.get(domain);
-            if (nodeID != null) {
-                return locator.getComponentSession(nodeID, new JID(domain));
+            Set<NodeID> nodeIDs = componentSessionsCache.get(domain);
+            if (nodeIDs != null) {
+                for (NodeID nodeID : nodeIDs ) {
+                    // TODO Think of a better way to pick a component.
+                    return locator.getComponentSession( nodeID.toByteArray(), new JID(domain) );
+                }
             }
         }
         return null;
@@ -1181,7 +1217,8 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
             router.route(offline);
         }
 
-        // Stop tracking information about the session and share it with other cluster nodes
+        // Stop tracking information about the session and share it with other cluster nodes.
+        // Note that, unlike other caches, this cache is populated only when clustering is enabled.
         sessionInfoCache.remove(fullJID.toString());
 
         if (removed || preauth_removed) {
@@ -1222,51 +1259,7 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         conflictLimit = limit;
         CONFLICT_LIMIT.setValue(limit);
     }
-    /*
-    @Override
-    public Iterator<DiscoServerItem> getItems() {
-        return Arrays.asList(new DiscoServerItem(serverAddress, null, null, null, this, this)).iterator();
-    }
 
-    @Override
-    public Iterator<Element> getIdentities(String name, String node, JID senderJID) {
-        return Collections.emptyIterator();
-    }
-
-    @Override
-    public Iterator<String> getFeatures(String name, String node, JID senderJID) {
-        return Collections.emptyIterator();
-    }
-
-    @Override
-    public DataForm getExtendedInfo(String name, String node, JID senderJID) {
-        return null;
-    }
-
-    @Override
-    public boolean hasInfo(String name, String node, JID senderJID) {
-        return false;
-    }
-
-    @Override
-    public Iterator<DiscoItem> getItems(String name, String node, JID senderJID) {
-        try {
-            // If the requesting entity is the user itself or the requesting entity can probe the presence of the user.
-            if (name != null && senderJID != null &&
-                server.getUserManager().isRegisteredUser(senderJID) &&
-                (name.equals(senderJID.getNode()) || server.getPresenceManager().canProbePresence(senderJID, name))) {
-                Collection<DiscoItem> discoItems = new ArrayList<DiscoItem>();
-                for (ClientSession clientSession : getSessions(name)) {
-                    discoItems.add(new DiscoItem(clientSession.getAddress(), null, null, null));
-                }
-                return discoItems.iterator();
-            }
-            return Collections.emptyIterator();
-        } catch (UserNotFoundException e) {
-            return Collections.emptyIterator();
-        }
-    }
-    */
     private class ClientSessionListener implements ConnectionCloseListener {
         /**
          * Handle a session that just closed.
@@ -1278,13 +1271,15 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
             try {
                 LocalClientSession session = (LocalClientSession) handback;
                 if (session.isDetached()) {
-                    Log.debug("Closing session is detached already.");
+                    Log.debug("Closing session with address {} and streamID {} is detached already.", session.getAddress(), session.getStreamID());
                     return;
                 }
                 if (session.getStreamManager().getResume()) {
-                    Log.debug("Closing session has SM enabled; detaching.");
+                    Log.debug("Closing session with address {} and streamID {} has SM enabled; detaching.", session.getAddress(), session.getStreamID());
                     session.setDetached();
                     return;
+                } else {
+                    Log.debug("Closing session with address {} and streamID {} does not have SM enabled.", session.getAddress(), session.getStreamID());
                 }
                 try {
                     if ((session.getPresence().isAvailable() || !session.wasAvailable()) &&
@@ -1308,39 +1303,6 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
             catch (Exception e) {
                 // Can't do anything about this problem...
                 Log.error(LocaleUtils.getLocalizedString("admin.error.close"), e);
-            }
-        }
-    }
-
-    private class ComponentSessionListener implements ConnectionCloseListener {
-        /**
-         * Handle a session that just closed.
-         *
-         * @param handback The session that just closed
-         */
-        @Override
-        public void onConnectionClose(Object handback) {
-            LocalComponentSession session = (LocalComponentSession)handback;
-            try {
-                // Unbind registered domains for this external component
-                for (String domain : session.getExternalComponent().getSubdomains()) {
-                    String subdomain = domain.substring(0, domain.indexOf(serverName) - 1);
-                    InternalComponentManager.getInstance().removeComponent(subdomain, session.getExternalComponent());
-                }
-            }
-            catch (Exception e) {
-                // Can't do anything about this problem...
-                Log.error(LocaleUtils.getLocalizedString("admin.error.close"), e);
-            }
-            finally {
-                // Remove the session
-                localSessionManager.getComponentsSessions().remove(session);
-
-                // Remove track of the cluster node hosting the external component
-                // if no more components are handling it.
-                if (!InternalComponentManager.getInstance().hasComponent(session.getAddress())) {
-                    componentSessionsCache.remove(session.getAddress().toString());
-                }
             }
         }
     }
@@ -1421,12 +1383,12 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         componentSessionsCache = CacheFactory.createCache(COMPONENT_SESSION_CACHE_NAME);
         multiplexerSessionsCache = CacheFactory.createCache(CM_CACHE_NAME);
         incomingServerSessionsCache = CacheFactory.createCache(ISS_CACHE_NAME);
-        hostnameSessionsCache = CacheFactory.createCache("Sessions by Hostname");
-        validatedDomainsCache = CacheFactory.createCache("Validated Domains");
+        hostnameSessionsCache = CacheFactory.createCache(HOSTNAME_SESSIONS_CACHE_NAME);
+        validatedDomainsCache = CacheFactory.createCache(VALIDATED_DOMAINS_CACHE_NAME);
         sessionInfoCache = CacheFactory.createCache(C2S_INFO_CACHE_NAME);
+
         // Listen to cluster events
         ClusterManager.addListener(this);
-        //server.getIQDiscoItemsHandler().addServerItemsProvider(this);
     }
 
 
@@ -1444,7 +1406,7 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
      * Sends a message with a given subject and body to one or more user sessions related to the
      * specified address. If address is null or the address's node is null then the message will be
      * sent to all the user sessions. But if the address includes a node but no resource then
-     * the message will be sent to all the user sessions of the requeted user (defined by the node).
+     * the message will be sent to all the user sessions of the requested user (defined by the node).
      * Finally, if the address is a full JID then the message will be sent to the session associated
      * to the full JID. If no session is found then the message is not sent.
      *
@@ -1454,14 +1416,20 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
      */
     public void sendServerMessage(JID address, String subject, String body) {
         Message packet = createServerMessage(subject, body);
-        if (address == null || address.getNode() == null || !userManager.isRegisteredUser(address)) {
+        if (address == null || address.getNode() == null) {
+            // No address, or no node: broadcast to all active user sessions on the server.
             broadcast(packet);
         }
         else if (address.getResource() == null || address.getResource().length() < 1) {
+            // Node, but no resource: broadcast to all active sessions for the user.
             userBroadcast(address.getNode(), packet);
         }
         else {
-            routingTable.routePacket(address, packet, true);
+            // Full JID: address to the session, if one exists.
+            for (JID sessionAddress : routingTable.getRoutes(address, null)) {
+                packet.setTo(sessionAddress); // expected to be equal to 'address'.
+                routingTable.routePacket(sessionAddress, packet, true);
+            }
         }
     }
 
@@ -1479,8 +1447,17 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
     public void start() throws IllegalStateException {
         super.start();
         localSessionManager.start();
-        // Run through the server sessions every 3 minutes after a 3 minutes server startup delay (default values)
-        int period = 3 * 60 * 1000;
+
+        // Run through the server sessions every 10% of the time of the maximum time that a session is allowed to be
+        // detached, or every 3 minutes if the max time is outside the default boundaries.
+        // TODO Reschedule task if getSessionDetachTime value changes.
+        final int max = getSessionDetachTime();
+        final long period;
+        if ( max > Duration.ofMinutes(1).toMillis() && max < Duration.ofHours(1).toMillis() ) {
+            period = max / 10;
+        } else {
+            period = Duration.ofMinutes(3).toMillis();
+        }
         TaskEngine.getInstance().scheduleAtFixedRate(new DetachedCleanupTask(), period, period);
     }
 
@@ -1494,6 +1471,16 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         }
         localSessionManager.stop();
         serverName = null;
+
+        try
+        {
+            // Purge our own components from the cache for the benefit of other cluster nodes.
+            CacheUtil.removeValueFromMultiValuedCache( componentSessionsCache, XMPPServer.getInstance().getNodeID() );
+        }
+        catch ( Exception e )
+        {
+            Log.warn( "An exception occurred while trying to remove locally connected external components from the clustered cache. Other cluster nodes might continue to see our external components, even though we this instance is stopping.", e );
+        }
     }
 
     /**
@@ -1590,35 +1577,101 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         return JiveGlobals.getIntProperty("xmpp.session.detach.timeout", 10 * 60 * 1000);
     }
 
+    // Note that, unlike other caches, this cache is populated only when clustering is enabled.
     public Cache<String, ClientSessionInfo> getSessionInfoCache() {
         return sessionInfoCache;
     }
 
     @Override
-    public void joinedCluster() {
+    public void joinedCluster()
+    {
+        // The local node joined a cluster.
+        //
+        // Upon joining a cluster, clustered caches are reset to their clustered equivalent (by the swap from the local
+        // cache implementation to the clustered cache implementation that's done in the implementation of
+        // org.jivesoftware.util.cache.CacheFactory.joinedCluster). This means that they now hold data that's
+        // available on all other cluster nodes. Data that's available on the local node needs to be added again.
         restoreCacheContent();
-        // Track information about local sessions and share it with other cluster nodes
-        for (ClientSession session : routingTable.getClientsRoutes(true)) {
-            sessionInfoCache.put(session.getAddress().toString(), new ClientSessionInfo((LocalClientSession)session));
-        }
+
+        // It does not appear to be needed to invoke any kind of event listeners for the data that was gained by joining
+        // the cluster (eg: sessions connected to other cluster nodes, now suddenly available to the local cluster node):
+        // There are six caches in play here, but only the content of one of them goes accompanied by firing off event
+        // listeners (sessionInfoCache). However, when already running in a clustered environment, those events are
+        // never broadcasted over the cluster, so there shouldn't be a need to do so for all sessions that were
+        // gained/lost when joining or leaving a cluster either.
     }
 
     @Override
     public void joinedCluster(byte[] nodeID) {
-        // Do nothing
+        // Another node joined a cluster that we're already part of. It is expected that
+        // the implementation of #joinedCluster() as executed on the cluster node that just
+        // joined will synchronize all relevant data. This method need not do anything.
     }
 
     @Override
     public void leftCluster() {
-        if (!XMPPServer.getInstance().isShuttingDown()) {
-            // Add local sessions to caches
-            restoreCacheContent();
+        // The local cluster node left the cluster.
+        if (XMPPServer.getInstance().isShuttingDown()) {
+            // Do not put effort in restoring the correct state if we're shutting down anyway.
+            return;
         }
+
+        // Upon leaving a cluster, clustered caches are reset to their local equivalent (by the swap from the clustered
+        // cache implementation to the default cache implementation that's done in the implementation of
+        // org.jivesoftware.util.cache.CacheFactory.leftCluster). This means that they now hold no data (as a new cache
+        // has been created). Data that's available on the local node needs to be added again.
+        restoreCacheContent();
+
+        // It does not appear to be needed to invoke any kind of event listeners for the data that was lost by leaving
+        // the cluster (eg: sessions connected to other cluster nodes, now unavailable to the local cluster node):
+        // There are six caches in play here, but only the content of one of them goes accompanied by firing off event
+        // listeners (sessionInfoCache). However, when already running in a clustered environment, those events are
+        // never broadcasted over the cluster, so there shouldn't be a need to do so for all sessions that were
+        // gained/lost when joining or leaving a cluster either.
     }
 
     @Override
     public void leftCluster(byte[] nodeID) {
-        // Do nothing
+        // Another node left the cluster.
+        //
+        // If the cluster node leaves in an orderly fashion, it might have broadcasted
+        // the necessary events itself. This cannot be depended on, as the cluster node
+        // might have disconnected unexpectedly (as a result of a crash or network issue).
+        //
+        // Determine what components were available only on that node, and remove them.
+        // All remaining cluster nodes will be in a race to clean up the
+        // same data. The implementation below accounts for that, by only having the
+        // senior cluster node to perform the cleanup.
+        if (!ClusterManager.isSeniorClusterMember())
+        {
+            return;
+        }
+
+        CacheUtil.removeValueFromMultiValuedCache(componentSessionsCache, NodeID.getInstance(nodeID));
+        CacheUtil.removeValueFromCache(multiplexerSessionsCache, NodeID.getInstance(nodeID));
+        final Set<StreamID> removedStreamIDs = CacheUtil.removeValueFromCache(incomingServerSessionsCache, NodeID.getInstance(nodeID));
+
+        // Update the collection of 'sockets/sessions coming from the same remote hostname' as well as the collection of 'validated domains' to reflect the loss of incoming server sessions.
+        if ( !removedStreamIDs.isEmpty() )
+        {
+            Log.debug("Cluster node {} just left the cluster, and was the node where incoming server sessions with IDs '{}' were living. They are no longer available.",
+                      NodeID.getInstance(nodeID),
+                      String.join(", ", removedStreamIDs.stream().map(StreamID::getID).collect(Collectors.toSet())));
+            unregisterIncomingServerSession(removedStreamIDs);
+        }
+
+        // In some cache implementations, the entry-set is unmodifiable. To guard against potential
+        // future changes of this implementation (that would make the implementation incompatible with
+        // these cache implementations), the entry-set that's operated on in this implementation is
+        // explicitly wrapped in an unmodifiable collection. That forces this implementation to be
+        // compatible with the 'lowest common denominator'.
+        final Set<Map.Entry<String, ClientSessionInfo>> entries = Collections.unmodifiableSet(sessionInfoCache.entrySet() );
+        for ( final Map.Entry<String, ClientSessionInfo> entry : entries )
+        {
+            if (entry.getValue().getNodeID().equals( NodeID.getInstance(nodeID) )) {
+                sessionInfoCache.remove(entry.getKey());
+            }
+        }
     }
 
     @Override
@@ -1626,55 +1679,29 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
         // Do nothing
     }
 
-    private void restoreCacheContent() {
-        // Add external component sessions hosted locally to the cache (using new nodeID)
-        for (Session session : localSessionManager.getComponentsSessions()) {
-            componentSessionsCache.put(session.getAddress().toString(), server.getNodeID().toByteArray());
+    /**
+     * When the local node is joining or leaving a cluster, {@link org.jivesoftware.util.cache.CacheFactory} will swap
+     * the implementation used to instantiate caches. This causes the cache content to be 'reset': it will no longer
+     * contain the data that's provided by the local node. This method restores data that's provided by the local node
+     * in the cache. It is expected to be invoked right after joining ({@link #joinedCluster()} or leaving
+     * ({@link #leftCluster()} a cluster.
+     */
+    private void restoreCacheContent()
+    {
+        if (ClusterManager.isClusteringStarted()) {
+            Log.trace( "Restoring cache content for cache '{}' by adding all client sessions that are connected to the local cluster node.", sessionInfoCache.getName() );
+            routingTable.getClientsRoutes(true).forEach( session -> sessionInfoCache.put(session.getAddress().toString(), new ClientSessionInfo( (LocalClientSession) session ) ) );
         }
 
-        // Add connection multiplexer sessions hosted locally to the cache (using new nodeID)
-        for (String address : localSessionManager.getConnnectionManagerSessions().keySet()) {
-            multiplexerSessionsCache.put(address, server.getNodeID().toByteArray());
-        }
+        Log.trace( "Restoring cache content for cache '{}' by adding all component sessions that are connected to the local cluster node.", componentSessionsCache.getName() );
+        localSessionManager.getComponentsSessions().forEach( session -> CacheUtil.addValueToMultiValuedCache( componentSessionsCache, session.getAddress().toString(), server.getNodeID(), HashSet::new ) );
 
-        // Add incoming server sessions hosted locally to the cache (using new nodeID)
-        for (LocalIncomingServerSession session : localSessionManager.getIncomingServerSessions()) {
-            StreamID streamID = session.getStreamID();
-            incomingServerSessionsCache.put(streamID, server.getNodeID().toByteArray());
-            for (String hostname : session.getValidatedDomains()) {
-                // Update list of sockets/sessions coming from the same remote hostname
-                Lock lock = CacheFactory.getLock(hostname, hostnameSessionsCache);
-                try {
-                    lock.lock();
-                    ArrayList<StreamID> streamIDs = hostnameSessionsCache.get(hostname);
-                    if (streamIDs == null) {
-                        streamIDs = new ArrayList<>();
-                    }
-                    streamIDs.add(streamID);
-                    hostnameSessionsCache.put(hostname, streamIDs);
-                }
-                finally {
-                    lock.unlock();
-                }
-                // Add to clustered cache
-                lock = CacheFactory.getLock(streamID, validatedDomainsCache);
-                try {
-                    lock.lock();
-                    HashSet<String> validatedDomains = validatedDomainsCache.get(streamID);
-                    if (validatedDomains == null) {
-                        validatedDomains = new HashSet<>();
-                    }
-                    boolean added = validatedDomains.add(hostname);
-                    if (added) {
-                        validatedDomainsCache.put(streamID, validatedDomains);
-                    }
-                } finally {
-                    lock.unlock();
-                }
-            }
-        }
+        Log.trace( "Restoring cache content for cache '{}' by adding all connection manager sessions that are connected to the local cluster node.", multiplexerSessionsCache.getName() );
+        localSessionManager.getConnnectionManagerSessions().forEach( (address, session) -> multiplexerSessionsCache.put( address, server.getNodeID() ) );
+
+        Log.trace( "Restoring cache content for cache '{}', '{}' and '{}' by adding all incoming server sessions that are connected to the local cluster node.", incomingServerSessionsCache.getName(), hostnameSessionsCache.getName(), validatedDomainsCache.getName());
+        localSessionManager.getIncomingServerSessions().forEach( session -> registerIncomingServerSession( session.getAddress().getDomain(), session ) );
     }
-
 
     /**
      * Task that closes detached client sessions.
@@ -1693,10 +1720,16 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
             final long deadline = System.currentTimeMillis() - idleTime;
             for (LocalSession session : detachedSessions.values()) {
                 try {
+                    Log.trace("Iterating over detached session '{}' ({}) to determine if it needs to be cleaned up.", session.getAddress(), session.getStreamID());
                     if (session.getLastActiveDate().getTime() < deadline) {
+                        Log.debug("Detached session '{}' ({}) has been detached for longer than {} and will be cleaned up.", session.getAddress(), session.getStreamID(), Duration.ofMillis(idleTime));
                         removeDetached(session);
                         LocalClientSession clientSession = (LocalClientSession)session;
-                        if (clientSession != null) {
+
+                        // OF-1923: Only close the session if it has not been replaced by another session (if the session
+                        // has been replaced, then the condition below will compare to distinct instances). This *should* not
+                        // occur (but has been observed, prior to the fix of OF-1923). This check is left in as a safeguard.
+                        if (session == routingTable.getClientRoute(session.getAddress())) {
                             try {
                                 if ((clientSession.getPresence().isAvailable() || !clientSession.wasAvailable()) &&
                                     routingTable.hasClientRoute(session.getAddress())) {
@@ -1714,11 +1747,15 @@ public class SessionManager extends BasicModule implements ClusterEventListener/
                                 // Remove the session
                                 removeSession(clientSession);
                             }
+                        } else {
+                            Log.warn("Not removing detached session '{}' ({}) that appears to have been replaced by another session.", session.getAddress(), session.getStreamID());
                         }
+                    } else {
+                        Log.trace("Detached session '{}' ({}) has been detached for {}, which is not longer than the configured maximum of {}. It will not (yet) be cleaned up.", session.getAddress(), session.getStreamID(), Duration.ofMillis(System.currentTimeMillis()-session.getLastActiveDate().getTime()), Duration.ofMillis(idleTime));
                     }
                 }
                 catch (Throwable e) {
-                    Log.error(LocaleUtils.getLocalizedString("admin.error"), e);
+                    Log.error("An exception occurred while trying processing detached session '{}' ({}).", session.getAddress(), session.getStreamID(), e);
                 }
             }
         }

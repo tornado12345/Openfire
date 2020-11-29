@@ -3,7 +3,6 @@ package org.jivesoftware.util;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.Appender;
 import org.apache.logging.log4j.core.Filter;
-import org.apache.logging.log4j.core.LogEvent;
 import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.appender.WriterAppender;
 import org.apache.logging.log4j.core.config.Configuration;
@@ -231,6 +230,11 @@ public class S2STestService {
         @Override
         public void interceptPacket(Packet packet, Session session, boolean incoming, boolean processed)
                 throws PacketRejectedException {
+
+            if (ping.getTo() == null || packet.getFrom() == null || packet.getTo() == null) {
+                return;
+            }
+
             if (!processed
                     && (ping.getTo().getDomain().equals(packet.getFrom().getDomain()) || ping.getTo().getDomain().equals(packet.getTo().getDomain()))) {
 

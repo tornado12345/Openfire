@@ -57,7 +57,6 @@ import org.dom4j.DocumentFactory;
 import org.dom4j.Element;
 import org.dom4j.io.OutputFormat;
 import org.dom4j.io.SAXReader;
-import org.jivesoftware.openfire.MessageRouter;
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.container.BasicModule;
 import org.jivesoftware.openfire.container.PluginManager;
@@ -69,12 +68,11 @@ import org.jivesoftware.util.Version;
 import org.jivesoftware.util.XMLWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.xmpp.packet.JID;
-import org.xmpp.packet.Message;
+import org.xml.sax.SAXException;
 
 /**
  * Service that frequently checks for new server or plugins releases. By default the service
- * will check every 48 hours for updates. Use the system property <tt>update.frequency</tt>
+ * will check every 48 hours for updates. Use the system property {@code update.frequency}
  * to set new values.
  * <p>
  * New versions of plugins can be downloaded and installed. However, new server releases
@@ -145,13 +143,6 @@ public class UpdateManager extends BasicModule {
      * Thread that performs the periodic checks for updates.
      */
     private Thread thread;
-
-    /**
-     * Router to use for sending notification messages to admins.
-     */
-    private MessageRouter router;
-    private String serverName;
-
 
     public UpdateManager() {
         super("Update manager");
@@ -245,8 +236,6 @@ public class UpdateManager extends BasicModule {
     @Override
     public void initialize(XMPPServer server) {
         super.initialize(server);
-        router = server.getMessageRouter();
-        serverName = server.getServerInfo().getXMPPDomain();
 
         JiveGlobals.migrateProperty(ENABLED.getKey());
         JiveGlobals.migrateProperty(NOTIFY_ADMINS.getKey());
@@ -486,7 +475,7 @@ public class UpdateManager extends BasicModule {
     }
 
     /**
-     * Returns the host of the proxy to use to connect to igniterealtime.org or <tt>null</tt>
+     * Returns the host of the proxy to use to connect to igniterealtime.org or {@code null}
      * if no proxy is used.
      *
      * @return the host of the proxy or null if no proxy is used.
@@ -496,7 +485,7 @@ public class UpdateManager extends BasicModule {
     }
 
     /**
-     * Sets the host of the proxy to use to connect to igniterealtime.org or <tt>null</tt>
+     * Sets the host of the proxy to use to connect to igniterealtime.org or {@code null}
      * if no proxy is used.
      *
      * @param host the host of the proxy or null if no proxy is used.
@@ -528,7 +517,7 @@ public class UpdateManager extends BasicModule {
     }
 
     /**
-     * Returns the server update or <tt>null</tt> if the server is up to date.
+     * Returns the server update or {@code null} if the server is up to date.
      *
      * @return the server update or null if the server is up to date.
      */
@@ -537,7 +526,7 @@ public class UpdateManager extends BasicModule {
     }
 
     /**
-     * Returns the plugin update or <tt>null</tt> if the plugin is up to date.
+     * Returns the plugin update or {@code null} if the plugin is up to date.
      *
      * @param pluginName     the name of the plugin (as described in the meta-data).
      * @param currentVersion current version of the plugin that is installed.
@@ -574,11 +563,10 @@ public class UpdateManager extends BasicModule {
     }
 
     private void processServerUpdateResponse(String response, boolean notificationsEnabled)
-            throws DocumentException {
+        throws DocumentException, SAXException {
         // Reset last known update information
         serverUpdate = null;
-        SAXReader xmlReader = new SAXReader();
-        xmlReader.setEncoding("UTF-8");
+        SAXReader xmlReader = setupSAXReader();
         Element xmlResponse = xmlReader.read(new StringReader(response)).getRootElement();
         // Parse response and keep info as Update objects
         Element openfire = xmlResponse.element("openfire");
@@ -611,28 +599,21 @@ public class UpdateManager extends BasicModule {
         }
         // Check if we need to send notifications to admins
         if (notificationsEnabled && isNotificationEnabled() && serverUpdate != null) {
-            Collection<JID> admins = XMPPServer.getInstance().getAdmins();
-            Message notification = new Message();
-            notification.setFrom(serverName);
-            notification.setBody(getNotificationMessage() + " " + serverUpdate.getComponentName() +
-                    " " + serverUpdate.getLatestVersion());
-            for (JID jid : admins) {
-                notification.setTo(jid);
-                router.route(notification);
-            }
+            XMPPServer.getInstance().sendMessageToAdmins(getNotificationMessage() +
+                " " + serverUpdate.getComponentName() +
+                " " + serverUpdate.getLatestVersion());
         }
         // Save response in a file for later retrieval
         saveLatestServerInfo();
     }
 
     private void processAvailablePluginsResponse(String response, boolean notificationsEnabled)
-            throws DocumentException {
+        throws DocumentException, SAXException {
         // Reset last known list of available plugins
         availablePlugins = new HashMap<>();
 
         // Parse response and keep info as AvailablePlugin objects
-        SAXReader xmlReader = new SAXReader();
-        xmlReader.setEncoding("UTF-8");
+        SAXReader xmlReader = setupSAXReader();
         Element xmlResponse = xmlReader.read(new StringReader(response)).getRootElement();
         Iterator plugins = xmlResponse.elementIterator("plugin");
         while (plugins.hasNext()) {
@@ -647,16 +628,10 @@ public class UpdateManager extends BasicModule {
 
         // Check if we need to send notifications to admins
         if (notificationsEnabled && isNotificationEnabled() && !pluginUpdates.isEmpty()) {
-            Collection<JID> admins = XMPPServer.getInstance().getAdmins();
             for (Update update : pluginUpdates) {
-                Message notification = new Message();
-                notification.setFrom(serverName);
-                notification.setBody(getNotificationMessage() + " " + update.getComponentName() +
-                        " " + update.getLatestVersion());
-                for (JID jid : admins) {
-                    notification.setTo(jid);
-                    router.route(notification);
-                }
+                XMPPServer.getInstance().sendMessageToAdmins(getNotificationMessage() +
+                    " " + update.getComponentName() +
+                    " " + update.getLatestVersion());
             }
         }
 
@@ -826,8 +801,7 @@ public class UpdateManager extends BasicModule {
             return;
         }
         try (FileReader reader = new FileReader(file)){
-            SAXReader xmlReader = new SAXReader();
-            xmlReader.setEncoding("UTF-8");
+            SAXReader xmlReader = setupSAXReader();
             xmlResponse = xmlReader.read(reader);
         } catch (Exception e) {
             Log.error("Error reading server-update.xml", e);
@@ -878,8 +852,7 @@ public class UpdateManager extends BasicModule {
             return;
         }
         try (FileReader reader = new FileReader(file)) {
-            SAXReader xmlReader = new SAXReader();
-            xmlReader.setEncoding("UTF-8");
+            SAXReader xmlReader = setupSAXReader();
             xmlResponse = xmlReader.read(reader);
         } catch (Exception e) {
             Log.error("Error reading available-plugins.xml", e);
@@ -903,5 +876,14 @@ public class UpdateManager extends BasicModule {
      */
     public Collection<Update> getPluginUpdates() {
         return pluginUpdates;
+    }
+
+    private SAXReader setupSAXReader() throws SAXException {
+        SAXReader xmlReader = new SAXReader();
+        xmlReader.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        xmlReader.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        xmlReader.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        xmlReader.setEncoding("UTF-8");
+        return xmlReader;
     }
 }

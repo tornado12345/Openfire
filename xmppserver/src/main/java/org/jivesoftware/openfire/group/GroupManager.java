@@ -17,12 +17,10 @@
 package org.jivesoftware.openfire.group;
 
 import java.io.Serializable;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.StringTokenizer;
+import java.util.*;
 
+import com.google.common.collect.Interner;
+import com.google.common.collect.Interners;
 import org.apache.commons.lang3.StringUtils;
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.event.GroupEventDispatcher;
@@ -30,10 +28,8 @@ import org.jivesoftware.openfire.event.GroupEventListener;
 import org.jivesoftware.openfire.event.UserEventDispatcher;
 import org.jivesoftware.openfire.event.UserEventListener;
 import org.jivesoftware.openfire.user.User;
-import org.jivesoftware.util.ClassUtils;
-import org.jivesoftware.util.JiveGlobals;
-import org.jivesoftware.util.PropertyEventDispatcher;
-import org.jivesoftware.util.PropertyEventListener;
+import org.jivesoftware.util.CacheableOptional;
+import org.jivesoftware.util.SystemProperty;
 import org.jivesoftware.util.cache.Cache;
 import org.jivesoftware.util.cache.CacheFactory;
 import org.slf4j.Logger;
@@ -48,16 +44,24 @@ import org.xmpp.packet.JID;
  */
 public class GroupManager {
 
+    public static final SystemProperty<Class> GROUP_PROVIDER = SystemProperty.Builder.ofType(Class.class)
+        .setKey("provider.group.className")
+        .setBaseClass(GroupProvider.class)
+        .setDefaultValue(DefaultGroupProvider.class)
+        .addListener(GroupManager::initProvider)
+        .setDynamic(true)
+        .build();
+
     private static final Logger Log = LoggerFactory.getLogger(GroupManager.class);
 
     private static final class GroupManagerContainer {
         private static final GroupManager instance = new GroupManager();
     }
 
-    private static final String MUTEX_SUFFIX_GROUP = " grp";
-    private static final String MUTEX_SUFFIX_USER = " grpu";
-    private static final String MUTEX_SUFFIX_KEY = " grpk";
-    
+    private static final Interner<String> groupBasedMutex = Interners.newWeakInterner();
+    private static final Interner<String> userBasedMutex = Interners.newWeakInterner();
+    private static final Interner<String> keyBasedMutex = Interners.newWeakInterner();
+
     private static final String GROUP_COUNT_KEY = "GROUP_COUNT";
     private static final String SHARED_GROUPS_KEY = "SHARED_GROUPS";
     private static final String GROUP_NAMES_KEY = "GROUP_NAMES";
@@ -74,9 +78,9 @@ public class GroupManager {
         return GroupManagerContainer.instance;
     }
 
-    private Cache<String, Group> groupCache;
+    private Cache<String, CacheableOptional<Group>> groupCache;
     private Cache<String, Serializable> groupMetaCache;
-    private GroupProvider provider;
+    private static GroupProvider provider;
 
     private GroupManager() {
         // Initialize caches.
@@ -86,7 +90,7 @@ public class GroupManager {
         // a particular user
         groupMetaCache = CacheFactory.createCache("Group Metadata Cache");
 
-        initProvider();
+        initProvider(GROUP_PROVIDER.getValue());
 
         GroupEventDispatcher.addListener(new GroupEventListener() {
             @Override
@@ -101,7 +105,7 @@ public class GroupManager {
                 }
                 
                 // Since the group could be created by the provider, add it possible again
-                groupCache.put(group.getName(), group);
+                groupCache.put(group.getName(), CacheableOptional.of(group));
 
                 // Evict only the information related to Groups.
                 // Do not evict groups with 'user' as keys.
@@ -119,8 +123,8 @@ public class GroupManager {
             @Override
             public void groupDeleting(Group group, Map params) {
                 // Since the group could be deleted by the provider, remove it possible again
-                groupCache.remove(group.getName());
-                
+                groupCache.put(group.getName(), CacheableOptional.of( null ));
+
                 // Evict only the information related to Groups.
                 // Do not evict groups with 'user' as keys.
                 clearGroupCountCache();
@@ -165,7 +169,17 @@ public class GroupManager {
 
                             // 'groupList' has changed
                             if (!StringUtils.equals(originalValue, newValue)) {
-                                evictCachedUsersForGroup(group, originalValue);
+                                evictCachedUsersForGroup( group );
+
+                                // Also clear the cache for groups that have been removed from the shared list.
+                                if ( originalValue != null ) {
+                                    final Set<String> newGroupNames = newValue == null ? new HashSet<>() : splitGroupList(newValue);
+                                    final Set<String> oldGroupNames = splitGroupList(originalValue);
+
+                                    // The 'new' group names are already handled by the evictCachedUserForGroup call above. No need to do that twice.
+                                    oldGroupNames.removeAll(newGroupNames);
+                                    oldGroupNames.forEach( g -> evictCachedUsersForGroup(g) );
+                                }
                             }
                         }
                     }
@@ -189,14 +203,14 @@ public class GroupManager {
                 }
                 // Set object again in cache. This is done so that other cluster nodes
                 // get refreshed with latest version of the object
-                groupCache.put(group.getName(), group);
+                groupCache.put(group.getName(), CacheableOptional.of(group));
             }
 
             @Override
             public void memberAdded(Group group, Map params) {
                 // Set object again in cache. This is done so that other cluster nodes
                 // get refreshed with latest version of the object
-                groupCache.put(group.getName(), group);
+                groupCache.put(group.getName(), CacheableOptional.of(group));
                 
                 // Remove only the collection of groups the member belongs to.
                 String member = (String) params.get("member");
@@ -207,7 +221,7 @@ public class GroupManager {
             public void memberRemoved(Group group, Map params) {
                 // Set object again in cache. This is done so that other cluster nodes
                 // get refreshed with latest version of the object
-                groupCache.put(group.getName(), group);
+                groupCache.put(group.getName(), CacheableOptional.of(group));
                 
                 // Remove only the collection of groups the member belongs to.
                 String member = (String) params.get("member");
@@ -218,7 +232,7 @@ public class GroupManager {
             public void adminAdded(Group group, Map params) {
                 // Set object again in cache. This is done so that other cluster nodes
                 // get refreshed with latest version of the object
-                groupCache.put(group.getName(), group);
+                groupCache.put(group.getName(), CacheableOptional.of(group));
                 
                 // Remove only the collection of groups the member belongs to.
                 String member = (String) params.get("admin");
@@ -229,7 +243,7 @@ public class GroupManager {
             public void adminRemoved(Group group, Map params) {
                 // Set object again in cache. This is done so that other cluster nodes
                 // get refreshed with latest version of the object
-                groupCache.put(group.getName(), group);
+                groupCache.put(group.getName(), CacheableOptional.of(group));
                 
                 // Remove only the collection of groups the member belongs to.
                 String member = (String) params.get("admin");
@@ -254,48 +268,16 @@ public class GroupManager {
                 // ignore
             }
         });
-
-        // Detect when a new auth provider class is set
-        PropertyEventListener propListener = new PropertyEventListener() {
-            @Override
-            public void propertySet(String property, Map params) {
-                if ("provider.group.className".equals(property)) {
-                    initProvider();
-                }
-            }
-
-            @Override
-            public void propertyDeleted(String property, Map params) {
-                //Ignore
-            }
-
-            @Override
-            public void xmlPropertySet(String property, Map params) {
-                //Ignore
-            }
-
-            @Override
-            public void xmlPropertyDeleted(String property, Map params) {
-                //Ignore
-            }
-        };
-        PropertyEventDispatcher.addListener(propListener);
     }
 
-    private void initProvider() {
-        // Convert XML based provider setup to Database based
-        JiveGlobals.migrateProperty("provider.group.className");
-
-        // Load a group provider.
-        String className = JiveGlobals.getProperty("provider.group.className",
-                "org.jivesoftware.openfire.group.DefaultGroupProvider");
-        try {
-            Class c = ClassUtils.forName(className);
-            provider = (GroupProvider) c.newInstance();
-        }
-        catch (Exception e) {
-            Log.error("Error loading group provider: " + className, e);
-            provider = new DefaultGroupProvider();
+    private static void initProvider(final Class clazz) {
+        if (provider == null || !clazz.equals(provider.getClass())) {
+            try {
+                provider = (GroupProvider) clazz.newInstance();
+            } catch (Exception e) {
+                Log.error("Error loading group provider: " + clazz.getName(), e);
+                provider = new DefaultGroupProvider();
+            }
         }
     }
 
@@ -307,7 +289,7 @@ public class GroupManager {
      * @throws GroupAlreadyExistsException if the group name already exists in the system.
      */
     public Group createGroup(String name) throws GroupAlreadyExistsException {
-        synchronized ((name + MUTEX_SUFFIX_GROUP).intern()) {
+        synchronized (groupBasedMutex.intern(name)) {
             Group newGroup;
             try {
                 getGroup(name);
@@ -318,7 +300,9 @@ public class GroupManager {
                 // The group doesn't already exist so we can create a new group
                 newGroup = provider.createGroup(name);
                 // Update caches.
-                groupCache.put(name, newGroup);
+                clearGroupNameCache();
+                clearGroupCountCache();
+                groupCache.put(name, CacheableOptional.of(newGroup));
 
                 // Fire event.
                 GroupEventDispatcher.dispatchEvent(newGroup,
@@ -360,23 +344,40 @@ public class GroupManager {
      * @throws GroupNotFoundException if the group does not exist.
      */
     public Group getGroup(String name, boolean forceLookup) throws GroupNotFoundException {
-        Group group = null;
+
+        final CacheableOptional<Group> firstCachedGroup;
         if (forceLookup) {
+            firstCachedGroup = null;
             groupCache.remove(name);
         } else {
-            group = groupCache.get(name);
+            firstCachedGroup = groupCache.get(name);
         }
-        // If ID wan't found in cache, load it up and put it there.
-        if (group == null) {
-            synchronized ((name + MUTEX_SUFFIX_GROUP).intern()) {
-                group = groupCache.get(name);
-                if (group == null) {
-                    group = provider.getGroup(name);
-                    groupCache.put(name, group);
-                }
+
+        if (firstCachedGroup != null) {
+            return toGroup(name, firstCachedGroup);
+        }
+
+        synchronized (groupBasedMutex.intern(name)) {
+            final CacheableOptional<Group> secondCachedGroup = groupCache.get(name);
+            if (secondCachedGroup != null) {
+                return toGroup(name, secondCachedGroup);
+            }
+
+            try {
+                final Group group = provider.getGroup(name);
+                groupCache.put(name, CacheableOptional.of(group));
+                return group;
+            } catch (final GroupNotFoundException e) {
+                groupCache.put(name, CacheableOptional.of(null));
+                throw e;
             }
         }
-        return group;
+    }
+
+    private Group toGroup(final String name, final CacheableOptional<Group> coGroup) throws GroupNotFoundException {
+        return coGroup
+            .toOptional()
+            .orElseThrow(() -> new GroupNotFoundException("Group with name " + name + " not found (cached)."));
     }
 
     /**
@@ -392,8 +393,10 @@ public class GroupManager {
         // Delete the group.
         provider.deleteGroup(group.getName());
 
-        // Expire cache.
-        groupCache.remove(group.getName());
+        // Add a no-hit to the cache.
+        groupCache.put(group.getName(), CacheableOptional.of(null));
+        clearGroupNameCache();
+        clearGroupCountCache();
     }
 
     /**
@@ -491,12 +494,13 @@ public class GroupManager {
     /**
      * Returns an unmodifiable Collection of all shared groups in the system for a given userName.
      *
+     * @param userName the user to check
      * @return an unmodifiable Collection of all shared groups for the given userName.
      */
     public Collection<Group> getSharedGroups(String userName) {
         HashSet<String> groupNames = getSharedGroupsForUserFromCache(userName);
         if (groupNames == null) {
-            synchronized((userName + MUTEX_SUFFIX_USER).intern()) {
+            synchronized (userBasedMutex.intern(userName)) {
                 groupNames = getSharedGroupsForUserFromCache(userName);
                 if (groupNames == null) {
                     // assume this is a local user
@@ -512,6 +516,7 @@ public class GroupManager {
     /**
      * Returns an unmodifiable Collection of all shared groups in the system for a given userName.
      *
+     * @param groupToCheck The group to check
      * @return an unmodifiable Collection of all shared groups for the given userName.
      */
     public Collection<Group> getVisibleGroups(Group groupToCheck) {
@@ -554,6 +559,8 @@ public class GroupManager {
      * Returns an unmodifiable Collection of all groups in the system that
      * match given propValue for the specified propName.
      *
+     * @param propName the property name to search for
+     * @param propValue the property value to search for
      * @return an unmodifiable Collection of all shared groups.
      */
     public Collection<Group> search(String propName, String propValue) {
@@ -575,7 +582,7 @@ public class GroupManager {
     public Collection<Group> getGroups(int startIndex, int numResults) {
         HashSet<String> groupNames = getPagedGroupNamesFromCache(startIndex, numResults);
         if (groupNames == null) {
-            synchronized((getPagedGroupNameKey(startIndex, numResults) + MUTEX_SUFFIX_KEY).intern()) {
+            synchronized (keyBasedMutex.intern(getPagedGroupNameKey(startIndex, numResults))) {
                 groupNames = getPagedGroupNamesFromCache(startIndex, numResults);
                 if (groupNames == null) {
                     groupNames = new HashSet<>(provider.getGroupNames(startIndex, numResults));
@@ -605,7 +612,7 @@ public class GroupManager {
     public Collection<Group> getGroups(JID user) {
         HashSet<String> groupNames = getUserGroupsFromCache(user);
         if (groupNames == null) {
-            synchronized((user.getNode() + MUTEX_SUFFIX_USER).intern()) {
+            synchronized (userBasedMutex.intern(user.getNode())) {
                 groupNames = getUserGroupsFromCache(user);
                 if (groupNames == null) {
                     groupNames = new HashSet<>(provider.getGroupNames(user));
@@ -662,6 +669,8 @@ public class GroupManager {
      * to ensure that searching is supported.
      *
      * @param query the search string for group names.
+     * @param startIndex the start index to retrieve the group list from
+     * @param numResults the maximum number of results to return
      * @return all groups that match the search.
      */
     public Collection<Group> search(String query, int startIndex, int numResults) {
@@ -697,62 +706,108 @@ public class GroupManager {
         }
     }
 
-    private void evictCachedUsersForGroup(Group group) {
-        evictCachedUsersForGroup(group, null);
+    /**
+     * Evict from cache all cached user entries that relate to the provided group.
+     *
+     * This method ignores group names for which a group cannot be found.
+     * 
+     * @param groupName The name of a group for which to evict cached user entries (cannot be null).
+     */
+    private void evictCachedUsersForGroup(String groupName)
+    {
+        try {
+            evictCachedUsersForGroup( getGroup(groupName) );
+        } catch ( GroupNotFoundException e ) {
+            Log.debug("Unable to evict cached users for group '{}': this group does not exist.", groupName, e);
+        }
     }
 
-    private void evictCachedUsersForGroup(Group group, String oldGroupList) {
-        // Evict cached information for affected users
-        for (JID user : group.getAdmins()) {
-            evictCachedUserForGroup(user.toBareJID());
+    /**
+     * Evict from cache all cached user entries that relate to the provided group.
+     *
+     * @param group The group for which to evict cached user entries (cannot be null).
+     */
+    private void evictCachedUsersForGroup(Group group)
+    {
+        // Get all nested groups, removing any cyclic dependency.
+        final Set<Group> groups = getSharedGroups( group, new HashMap<>() );
+
+        // Evict cached information for affected users.
+        groups.forEach( g -> {
+            g.getAdmins().forEach( jid -> evictCachedUserForGroup( jid.toBareJID()) );
+            g.getMembers().forEach( jid -> evictCachedUserForGroup( jid.toBareJID()) );
+        });
+
+        // If any of the groups is shared with everybody, evict all cached groups.
+        if ( groups.stream().anyMatch( g -> {
+            final String showInRoster = g.getProperties().get("sharedRoster.showInRoster");
+            return "everybody".equalsIgnoreCase( showInRoster );
+        } )) {
+            evictCachedUserSharedGroups();
         }
-        for (JID user : group.getMembers()) {
-            evictCachedUserForGroup(user.toBareJID());
-        }
+    }
+
+    /**
+     * Find the unique set of groups with which the provided group is shared,
+     * directly or indirectly. An indirect share is defined as a scenario where
+     * the group is shared by a group that's shared with another group).
+     *
+     * This method is designed to allow for cyclic group sharing dependencies.
+     *
+     * The returned set will include the original group itself.
+     *
+     * @param group The group for which to return all groups that its shared with (cannot be null).
+     * @param result An intermediate result, used in recursive calls. Cannot be null. Use an empty group when invoking this.
+     * @return A set of groups with which all members of 'group' are shared with (never null, will at least contain 'group').
+     */
+    private Set<Group> getSharedGroups( final Group group, final Map<String, Group> result ) {
+        result.put( group.getName(), group );
 
         final String showInRoster = group.getProperties().get("sharedRoster.showInRoster");
-        if (showInRoster != null )
+        if ( "onlygroup".equals(showInRoster.toLowerCase()) )
         {
-            switch ( showInRoster.toLowerCase() )
+            final Set<String> groupNames = new HashSet<>();
+            final String groupList = group.getProperties().get("sharedRoster.groupList");
+            if ( groupList != null ) {
+                groupNames.addAll( splitGroupList( groupList ) );
+            }
+
+            for ( String groupName : groupNames )
             {
-                case "everybody":
-                    evictCachedUserSharedGroups();
-                    break;
-
-                case "onlygroup":
-                    String groupList = group.getProperties().get( "sharedRoster.groupList" );
-                    if (groupList != null && oldGroupList != null) {
-                        groupList = groupList + "," + oldGroupList;
-                    } else if (groupList == null) {
-                        groupList = oldGroupList;
+                // When this group is shared with groups that we haven't visited yet, recurse.
+                if ( !result.containsKey(groupName) )
+                {
+                    try
+                    {
+                        final Group nested = getGroup(groupName);
+                        getSharedGroups(nested, result);
                     }
-                    if (groupList != null) {
-                        HashSet<String> spefgroups = new HashSet<>();
-                        final StringTokenizer tokenizer = new StringTokenizer( groupList, ",\t\n\r\f" );
-                        while ( tokenizer.hasMoreTokens() ) {
-                            spefgroups.add(tokenizer.nextToken().trim());
-                        }
-                        for (String spefgroup : spefgroups){
-                            try
-                            {
-                                final Group nested = getGroup( spefgroup );
-                                evictCachedUsersForGroup( nested );
-                            }
-                            catch ( StackOverflowError e )
-                            {
-                                Log.warn( "Cyclic sharing groups found. Please remove the cycle of groups '{}' and '{}'", group.getName(), spefgroup );
-                            }
-                            catch ( GroupNotFoundException e )
-                            {
-                                Log.debug( "While evicting cached users for group '{}', an unrecognized spefgroup was found: '{}'", group.getName(), spefgroup, e );
-                            }
-                        }
+                    catch ( GroupNotFoundException e )
+                    {
+                        Log.debug("While iterating over subgroups of group '{}', an unrecognized spefgroup was found: '{}'", group.getName(), groupName, e);
                     }
-                    break;
-
-
+                }
             }
         }
+
+        return new HashSet<>(result.values());
+    }
+
+    /**
+     * Splits a comma-separated string of group name in a set of group names.
+     * @param csv The comma-separated list. Cannot be null.
+     * @return A set of group names.
+     */
+    protected static Set<String> splitGroupList( String csv )
+    {
+        final Set<String> result = new HashSet<>();
+        final StringTokenizer tokenizer = new StringTokenizer(csv, ",\t\n\r\f");
+        while ( tokenizer.hasMoreTokens() )
+        {
+            result.add(tokenizer.nextToken().trim());
+        }
+
+        return result;
     }
 
     private void evictCachedPaginatedGroupNames() {

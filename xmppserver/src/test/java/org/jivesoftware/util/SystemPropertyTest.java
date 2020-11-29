@@ -4,6 +4,7 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.Matchers.equalTo;
 import static org.junit.Assert.assertThat;
+import static org.mockito.Mockito.doReturn;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -18,30 +19,39 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.jivesoftware.Fixtures;
+import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.auth.AuthProvider;
 import org.jivesoftware.openfire.auth.DefaultAuthProvider;
 import org.jivesoftware.openfire.auth.HybridAuthProvider;
+import org.jivesoftware.openfire.container.PluginManager;
 import org.jivesoftware.openfire.ldap.LdapAuthProvider;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnitRunner;
 import org.xmpp.packet.JID;
 
+@RunWith(MockitoJUnitRunner.class)
 public class SystemPropertyTest {
+
+    @Mock
+    private XMPPServer xmppServer;
+    @Mock
+    private PluginManager pluginManager;
 
     @BeforeClass
     public static void setUpClass() throws Exception {
         Fixtures.reconfigureOpenfireHome();
-        // The following allows JiveGlobals to persist
-        JiveGlobals.setXMLProperty("setup", "true");
-        // The following speeds up tests by avoiding DB retries
-        JiveGlobals.setXMLProperty("database.maxRetries", "0");
-        JiveGlobals.setXMLProperty("database.retryDelay", "0");
     }
 
+    @SuppressWarnings({"deprecation", "ResultOfMethodCallIgnored"})
     @Before
     public void setUp() {
-        JiveGlobals.getPropertyNames().forEach(JiveGlobals::deleteProperty);
+        Fixtures.clearExistingProperties();
+        doReturn(pluginManager).when(xmppServer).getPluginManager();
+        XMPPServer.setInstance(xmppServer);
     }
 
     @Test
@@ -74,6 +84,22 @@ public class SystemPropertyTest {
         longProperty.setValue(84L);
         assertThat(longProperty.getValue(), is(84L));
         assertThat(longProperty.getValueAsSaved(), is("84"));
+    }
+
+    @Test
+    public void willBuildADoubleProperty() {
+
+        final SystemProperty<Double> doubleProperty = SystemProperty.Builder.ofType(Double.class)
+            .setKey("a-test-double-property")
+            .setDefaultValue(42.2)
+            .setDynamic(true)
+            .build();
+
+        assertThat(doubleProperty.getValue(), is(42.2));
+        assertThat(doubleProperty.getValueAsSaved(), is("42.2"));
+        doubleProperty.setValue(84.1);
+        assertThat(doubleProperty.getValue(), is(84.1));
+        assertThat(doubleProperty.getValueAsSaved(), is("84.1"));
     }
 
     @Test
@@ -423,7 +449,7 @@ public class SystemPropertyTest {
             .build();
 
         assertThat(property.getValue(), is(nullValue()));
-        final Instant value = Instant.now();
+        final Instant value = Instant.now().truncatedTo(ChronoUnit.MILLIS);
         property.setValue(value);
         assertThat(property.getValue(), is(value));
     }
@@ -432,7 +458,7 @@ public class SystemPropertyTest {
     public void willCreateAnInstantPropertyWithADefaultValue() {
 
         final String key = "test.instant.property.with.default";
-        final Instant defaultValue = Instant.now();
+        final Instant defaultValue = Instant.now().truncatedTo(ChronoUnit.MILLIS);
 
         final SystemProperty<Instant> property = SystemProperty.Builder.ofType(Instant.class)
             .setKey(key)

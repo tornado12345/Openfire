@@ -16,15 +16,18 @@
 
 package org.jivesoftware.openfire.muc;
 
+import org.jivesoftware.database.JiveID;
+import org.jivesoftware.openfire.archive.ArchiveManager;
+import org.jivesoftware.openfire.archive.Archiver;
 import org.jivesoftware.openfire.handler.IQHandler;
+import org.jivesoftware.openfire.muc.spi.LocalMUCRoom;
 import org.jivesoftware.openfire.muc.spi.MUCPersistenceManager;
+import org.jivesoftware.util.JiveConstants;
 import org.xmpp.component.Component;
 import org.xmpp.packet.JID;
 import org.xmpp.packet.Message;
-import org.jivesoftware.openfire.muc.spi.LocalMUCRoom;
-import org.jivesoftware.database.JiveID;
-import org.jivesoftware.util.JiveConstants;
 
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 
@@ -64,7 +67,8 @@ public interface MultiUserChatService extends Component {
     
     /**
      * Validates the given JID as a MUC service administrator. 
-     * 
+     *
+     * @param bareJID the bare JID of the user
      * @return true if the given JID is a MUC service administrator
      */
     boolean isSysadmin(JID bareJID);
@@ -226,8 +230,10 @@ public interface MultiUserChatService extends Component {
      * save on each run can be configured. See {@link #setLogConversationBatchSize(int)}.
      *
      * @param timeout the time to elapse between logging the room conversations.
+     * @deprecated No longer used in Openfire 4.4.0 and later (replaced with continuous writes to database: see {@link ArchiveManager}).
      */
-    void setLogConversationsTimeout(int timeout);
+    @Deprecated
+    default void setLogConversationsTimeout(int timeout) {}
 
     /**
      * Returns the time to elapse between logging the room conversations. A <code>TimerTask</code>
@@ -236,8 +242,10 @@ public interface MultiUserChatService extends Component {
      * save on each run can be configured. See {@link #getLogConversationBatchSize()}.
      *
      * @return the time to elapse between logging the room conversations.
+     * @deprecated No longer used in Openfire 4.4.0 and later (replaced with continuous writes to database: see {@link ArchiveManager}).
      */
-    int getLogConversationsTimeout();
+    @Deprecated
+    default int getLogConversationsTimeout() { return 300000; }
 
     /**
      * Sets the number of messages to save to the database on each run of the logging process.
@@ -245,15 +253,61 @@ public interface MultiUserChatService extends Component {
      * recommended specifying a big number.
      *
      * @param size the number of messages to save to the database on each run of the logging process.
+     * @deprecated No longer used in Openfire 4.4.0 and later (replaced with continuous writes to database: see {@link ArchiveManager}).
      */
-    void setLogConversationBatchSize(int size);
+    @Deprecated
+    default void setLogConversationBatchSize(int size) {};
 
     /**
      * Returns the number of messages to save to the database on each run of the logging process.
      *
      * @return the number of messages to save to the database on each run of the logging process.
+     * @deprecated No longer used in Openfire 4.4.0 and later (replaced with continuous writes to database: see {@link ArchiveManager}).
      */
-    int getLogConversationBatchSize();
+    @Deprecated
+    default int getLogConversationBatchSize() { return 50; };
+
+    Archiver<?> getArchiver();
+
+
+    /**
+     * Returns the maximum number of messages to save to the database on each run of the archiving process.
+     * @return the maximum number of messages to save to the database on each run of the archiving process.
+     */
+    default int getLogMaxConversationBatchSize() { return 50; }
+
+    /**
+     * Sets the maximum number of messages to save to the database on each run of the archiving process.
+     * Even though the saving of queued conversations takes place in another thread it is not
+     * recommended specifying a big number.
+     *
+     * @param size the maximum number of messages to save to the database on each run of the archiving process.
+     */
+    default void setLogMaxConversationBatchSize(int size) {}
+
+    /**
+     * Returns the maximum time allowed to elapse between writing archive entries to the database.
+     * @return the maximum time allowed to elapse between writing archive entries to the database.
+     */
+    default Duration getLogMaxBatchInterval() { return Duration.ofSeconds(10L); }
+
+    /**
+     * Sets the maximum time allowed to elapse between writing archive batches to the database.
+     * @param interval the maximum time allowed to elapse between writing archive batches to the database.
+     */
+    default void setLogMaxBatchInterval(Duration interval) {}
+
+    /**
+     * Returns the maximum time to wait for a next incoming entry before writing the batch to the database.
+     * @return the maximum time to wait for a next incoming entry before writing the batch to the database.
+     */
+    default Duration getLogBatchGracePeriod() { return Duration.ofSeconds(1L); }
+
+    /**
+     * Sets the maximum time to wait for a next incoming entry before writing the batch to the database.
+     * @param interval the maximum time to wait for a next incoming entry before writing the batch to the database.
+     */
+    default void setLogBatchGracePeriod(Duration interval) {}
 
     /**
      * Obtain the server-wide default message history settings.
@@ -261,6 +315,15 @@ public interface MultiUserChatService extends Component {
      * @return The message history strategy defaults for the server.
      */
     HistoryStrategy getHistoryStrategy();
+
+    /**
+     * Checks if the a particular entity is allowed to discover the room's existence.
+     *
+     * @param room The room to be discovered (cannot be null).
+     * @param entity The JID of the entity (cannot be null).
+     * @return true if the entity can discover the room, otherwise false.
+     */
+    boolean canDiscoverRoom(final MUCRoom room, final JID entity);
 
     /**
      * Obtains a chatroom by name. A chatroom is created for that name if none exists and the user
@@ -440,6 +503,7 @@ public interface MultiUserChatService extends Component {
     /**
      * Add a IQHandler to MUC rooms and services. If the IQHandler only supports one or
      * other, it should quietly ignore it.
+     * @param handler the IQ handler to add
      */
     void addIQHandler(IQHandler handler);
     void removeIQHandler(IQHandler handler);

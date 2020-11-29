@@ -26,11 +26,13 @@
     errorPage="error.jsp"
 %>
 <%@ page import="java.util.Date" %>
-<%@ page import="java.util.List" %>
 <%@ page import="org.jivesoftware.util.ListPager" %>
-<%@ page import="java.util.stream.Collectors" %>
 <%@ page import="java.util.function.Predicate" %>
 <%@ page import="java.net.UnknownHostException" %>
+<%@ page import="java.util.Collection" %>
+<%@ page import="java.util.List" %>
+<%@ page import="java.util.ArrayList" %>
+<%@ page import="org.jivesoftware.openfire.cluster.ClusterManager" %>
 
 <%@ taglib uri="http://java.sun.com/jsp/jstl/core" prefix="c" %>
 <%@ taglib uri="http://java.sun.com/jsp/jstl/fmt" prefix="fmt" %>
@@ -95,16 +97,7 @@
     SessionResultFilter sessionResultFilter = SessionResultFilter.createDefaultSessionFilter();
     sessionResultFilter.setSortOrder(order);
     // Filter out the dodgy looking sessions
-    List<ClientSession> sessions = sessionManager.getSessions(sessionResultFilter)
-        .stream()
-        .filter(clientSession -> {
-            try { // skip invalid sessions (OF-590)
-                return clientSession.validate();
-            } catch (Exception ex) {
-                return false;
-            }
-        })
-        .collect(Collectors.toList());
+    List<ClientSession> sessions = new ArrayList<>(sessionManager.getSessions( sessionResultFilter));
 
     // By default, display all nodes
     Predicate<ClientSession> filter = clientSession -> true;
@@ -127,6 +120,9 @@
     final String searchStatus = ParamUtils.getStringParameter(request, "searchStatus", "");
     if(!searchStatus.isEmpty()) {
         filter = filter.and(clientSession -> {
+            if (searchStatus.equals("detached")) {
+                return clientSession instanceof LocalSession && ((LocalSession) clientSession).isDetached();
+            }
             switch (clientSession.getStatus()) {
                 case Session.STATUS_CLOSED:
                     return "closed".equals(searchStatus);
@@ -198,6 +194,7 @@
     pageContext.setAttribute("searchPresence", searchPresence);
     pageContext.setAttribute("searchPriority", searchPriority);
     pageContext.setAttribute("searchHostAddress", searchHostAddress);
+    pageContext.setAttribute("clusteringEnabled", ClusterManager.isClusteringStarted() || ClusterManager.isClusteringStarting() );
 %>
 <html>
     <head>
@@ -291,7 +288,9 @@
         %>
         </th>
         <th nowrap><fmt:message key="session.details.resource" /></th>
+        <c:if test="${clusteringEnabled}">
         <th nowrap><fmt:message key="session.details.node" /></th>
+        </c:if>
         <th nowrap colspan="2"><fmt:message key="session.details.status" /></th>
         <th nowrap colspan="2"><fmt:message key="session.details.presence" /></th>
         <th nowrap><fmt:message key="session.details.priority" /></th>
@@ -324,6 +323,7 @@
                  onclick="submitForm();"
             >
         </td>
+        <c:if test="${clusteringEnabled}">
         <td nowrap>
             <select id="searchNode" onchange="submitForm();">
                 <option <c:if test='${searchNode eq ""}'>selected</c:if> value=""></option>
@@ -331,12 +331,14 @@
                 <option <c:if test='${searchNode eq "remote"}'>selected </c:if>value="remote"><fmt:message key="session.details.remote"/></option>
             </select>
         </td>
+        </c:if>
         <td nowrap colspan="2">
             <select id="searchStatus" onchange="submitForm();">
                 <option <c:if test='${searchStatus eq ""}'>selected</c:if> value=""></option>
                 <option <c:if test='${searchStatus eq "closed"}'>selected</c:if> value="closed"><fmt:message key="session.details.close"/></option>
                 <option <c:if test='${searchStatus eq "connected"}'>selected</c:if> value="connected"><fmt:message key="session.details.connect"/></option>
                 <option <c:if test='${searchStatus eq "authenticated"}'>selected</c:if> value="authenticated"><fmt:message key="session.details.authenticated"/></option>
+                <option <c:if test='${searchStatus eq "detached"}'>selected</c:if> value="detached"><fmt:message key="session.details.local"/> & <fmt:message key="session.details.sm-detached"/></option>
                 <option <c:if test='${searchStatus eq "unknown"}'>selected</c:if> value="unknown"><fmt:message key="session.details.unknown"/></option>
             </select>
         </td>

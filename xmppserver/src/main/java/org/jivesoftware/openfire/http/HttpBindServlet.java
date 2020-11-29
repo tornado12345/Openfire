@@ -32,7 +32,6 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.*;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.util.Date;
 
 /**
  * Servlet which handles requests to the HTTP binding service. It determines if there is currently
@@ -240,9 +239,9 @@ public class HttpBindServlet extends HttpServlet {
         if ("GET".equals(request.getMethod())) {
             if (JiveGlobals.getBooleanProperty("xmpp.httpbind.client.no-cache.enabled", true)) {
                 // Prevent caching of responses
-                response.addHeader("Cache-Control", "no-store");
+                response.setHeader("Cache-Control", "no-store");
                 response.addHeader("Cache-Control", "no-cache");
-                response.addHeader("Pragma", "no-cache");
+                response.setHeader("Pragma", "no-cache");
             }
             content = "_BOSH_(\"" + StringEscapeUtils.escapeEcmaScript(content) + "\")";
         }
@@ -340,7 +339,9 @@ public class HttpBindServlet extends HttpServlet {
 
         @Override
         public void onDataAvailable() throws IOException {
-            Log.trace("Data is available to be read from [" + remoteAddress + "]");
+            if( Log.isTraceEnabled() ) {
+                Log.trace("Data is available to be read from [" + remoteAddress + "]");
+            }
 
             final ServletInputStream inputStream = context.getRequest().getInputStream();
 
@@ -353,13 +354,17 @@ public class HttpBindServlet extends HttpServlet {
 
         @Override
         public void onAllDataRead() throws IOException {
-            Log.trace("All data has been read from [" + remoteAddress + "]");
+            if( Log.isTraceEnabled() ) {
+                Log.trace("All data has been read from [" + remoteAddress + "]");
+            }
             processContent(context, outStream.toString(StandardCharsets.UTF_8.name()));
         }
 
         @Override
         public void onError(Throwable throwable) {
-            Log.warn("Error reading request data from [" + remoteAddress + "]", throwable);
+            if( Log.isWarnEnabled() ) {
+                Log.warn("Error reading request data from [" + remoteAddress + "]", throwable);
+            }
             try {
                 sendLegacyError(context, BoshBindingError.badRequest);
             } catch (IOException ex) {
@@ -385,7 +390,9 @@ public class HttpBindServlet extends HttpServlet {
             // This method may be invoked multiple times and by different threads, e.g. when writing large byte arrays.
             // Make sure a write/complete operation is only done, if no other write is pending, i.e. if isReady() == true
             // Otherwise WritePendingException is thrown.
-            Log.trace("Data can be written to [" + remoteAddress + "]");
+            if( Log.isTraceEnabled() ) {
+                Log.trace("Data can be written to [" + remoteAddress + "]");
+            }
             synchronized ( context )
             {
                 final ServletOutputStream servletOutputStream = context.getResponse().getOutputStream();
@@ -412,7 +419,9 @@ public class HttpBindServlet extends HttpServlet {
 
         @Override
         public void onError(Throwable throwable) {
-            Log.warn("Error writing response data to [" + remoteAddress + "]", throwable);
+            if( Log.isWarnEnabled() ) {
+                Log.warn("Error writing response data to [" + remoteAddress + "]", throwable);
+            }
             synchronized ( context )
             {
                 context.complete();

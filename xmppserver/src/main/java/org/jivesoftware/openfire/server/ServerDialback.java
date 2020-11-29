@@ -38,6 +38,7 @@ import org.jivesoftware.openfire.session.LocalOutgoingServerSession;
 import org.jivesoftware.openfire.spi.BasicStreamIDFactory;
 import org.jivesoftware.openfire.spi.ConnectionManagerImpl;
 import org.jivesoftware.openfire.spi.ConnectionType;
+import org.jivesoftware.openfire.event.ServerSessionEventDispatcher;
 import org.jivesoftware.util.JiveGlobals;
 import org.jivesoftware.util.StringUtils;
 import org.jivesoftware.util.cache.Cache;
@@ -51,6 +52,7 @@ import org.xmpp.packet.JID;
 import org.xmpp.packet.PacketError;
 import org.xmpp.packet.StreamError;
 
+import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLHandshakeException;
 
 /**
@@ -193,7 +195,7 @@ public class ServerDialback {
      * @param localDomain domain of the Originating Server to authenticate with the Receiving Server.
      * @param remoteDomain IP address or hostname of the Receiving Server.
      * @param port port of the Receiving Server.
-     * @return an OutgoingServerSession if the domain was authenticated or <tt>null</tt> if none.
+     * @return an OutgoingServerSession if the domain was authenticated or {@code null} if none.
      */
     public LocalOutgoingServerSession createOutgoingSession(String localDomain, String remoteDomain, int port) {
         final Logger log = LoggerFactory.getLogger( Log.getName() + "[Acting as Originating Server: Create Outgoing Session from: " + localDomain + " to RS at: " + remoteDomain + " (port: " + port+ ")]" );
@@ -406,6 +408,8 @@ public class ServerDialback {
                         // Set the domain or subdomain of the local server used when
                         // validating the session
                         session.setLocalDomain(recipient);
+                        // After the session has been created, inform all listeners as well.
+                        ServerSessionEventDispatcher.dispatchEvent(session, ServerSessionEventDispatcher.EventType.session_created);
                         return session;
                     } else {
                         Log.debug("ServerDialback: RS - Validation of remote domain for incoming session from {} to {} was not successful.", hostname, recipient);
@@ -552,8 +556,9 @@ public class ServerDialback {
                 VerifyResult result;
                 try {
                     log.debug( "Verifying dialback key..." );
-                    try
-                    {
+                    final SocketAddress socketAddress = socket.getRemoteSocketAddress();
+                    log.debug( "Opening a new connection to {} {}.", socketAddress, directTLS ? "using directTLS" : "that is initially not encrypted" );
+                    try {
                         result = verifyKey( key, streamID, recipient, remoteDomain, socket, directTLS, directTLS );
                     }
                     catch (SSLHandshakeException e)
@@ -577,13 +582,31 @@ public class ServerDialback {
 
                             result = verifyKey( key, streamID, recipient, remoteDomain, socket, true, directTLS );
                         }
+                    } catch ( SSLException ex ) {
+                        if ( JiveGlobals.getBooleanProperty(ConnectionSettings.Server.TLS_ON_PLAIN_DETECTION_ALLOW_NONDIRECTTLS_FALLBACK, true) && ex.getMessage().contains( "plaintext connection?" ) ) {
+                            Log.warn( "Plaintext detected on a new connection that is was started in DirectTLS mode (socket address: {}). Attempting to restart the connection in non-DirectTLS mode.", socketAddress );
+                            try {
+                                // Close old socket
+                                socket.close();
+                            } catch ( Exception e ) {
+                                Log.debug( "An exception occurred (and is ignored) while trying to close a socket that was already in an error state.", e );
+                            }
+                            socket = new Socket();
+                            socket.connect( socketAddress, RemoteServerManager.getSocketTimeout() );
+                            result = verifyKey( key, streamID, recipient, remoteDomain, socket, false, false );
+                            directTLS = false; // No error this time? directTLS apparently is 'false'. Change it's value for future usage (if any)
+                            Log.info( "Re-established connection to {}. Proceeding without directTLS.", socketAddress );
+                        } else {
+                            // Do not retry as non-DirectTLS, rethrow the exception.
+                            throw ex;
+                        }
                     }
 
                     switch(result) {
                     case valid:
                     case invalid:
                         boolean valid = (result == VerifyResult.valid);
-                        log.debug( "Dialback key is" + (valid? "valid":"invalid") + ". Sending verification result to remote domain." );
+                        log.debug( "Dialback key is " + (valid? "valid":"invalid") + ". Sending verification result to remote domain." );
                         sb = new StringBuilder();
                         sb.append("<db:result");
                         sb.append(" from=\"").append(recipient).append("\"");
@@ -677,6 +700,9 @@ public class ServerDialback {
                 doc = reader.parseDocument();
             } catch (DocumentException e) {
                 log.warn("Unable to verify key: XML Error!", e);
+                // Close the stream
+                writer.write("</stream:stream>");
+                writer.flush();
                 return VerifyResult.error;
             }
             Element features = doc.getRootElement();
@@ -688,11 +714,17 @@ public class ServerDialback {
                     doc = reader.parseDocument();
                 } catch (DocumentException e) {
                     log.warn("Unable to verify key: XML Error!", e);
+                    // Close the stream
+                    writer.write("</stream:stream>");
+                    writer.flush();
                     return VerifyResult.error;
                 }
                 if (!doc.getRootElement().getName().equals("proceed")) {
                     log.warn("Unable to verify key: Got {} instead of proceed for starttls", doc.getRootElement().getName());
                     log.debug("Like this: {}", doc.asXML());
+                    // Close the stream
+                    writer.write("</stream:stream>");
+                    writer.flush();
                     return VerifyResult.error;
                 }
 
@@ -725,6 +757,7 @@ public class ServerDialback {
                     if (doc.attributeValue("id") == null || !streamID.equals(BasicStreamIDFactory.createStreamID( doc.attributeValue("id") ))) {
                         // Include the invalid-id stream error condition in the response
                         writer.write(new StreamError(StreamError.Condition.invalid_id).toXML());
+                        writer.write("</stream:stream>");
                         writer.flush();
                         // Thrown an error so <remote-connection-failed/> stream error
                         // condition is sent to the Originating Server
@@ -732,8 +765,8 @@ public class ServerDialback {
                     }
                     else if (isHostUnknown( doc.attributeValue( "to" ) )) {
                         // Include the host-unknown stream error condition in the response
-                        writer.write(
-                                new StreamError(StreamError.Condition.host_unknown).toXML());
+                        writer.write(new StreamError(StreamError.Condition.host_unknown).toXML());
+                        writer.write("</stream:stream>");
                         writer.flush();
                         // Thrown an error so <remote-connection-failed/> stream error
                         // condition is sent to the Originating Server
@@ -741,8 +774,8 @@ public class ServerDialback {
                     }
                     else if (!remoteDomain.equals(doc.attributeValue("from"))) {
                         // Include the invalid-from stream error condition in the response
-                        writer.write(
-                                new StreamError(StreamError.Condition.invalid_from).toXML());
+                        writer.write(new StreamError(StreamError.Condition.invalid_from).toXML());
+                        writer.write("</stream:stream>");
                         writer.flush();
                         // Thrown an error so <remote-connection-failed/> stream error
                         // condition is sent to the Originating Server
@@ -769,6 +802,8 @@ public class ServerDialback {
                 log.error("An error occurred while connecting to the Authoritative Server:", e);
                 // Thrown an error so <remote-connection-failed/> stream error condition is
                 // sent to the Originating Server
+                writer.write("</stream:stream>");
+                writer.flush();
                 throw new RemoteConnectionFailedException("Error connecting to the Authoritative Server");
             }
 
@@ -776,11 +811,14 @@ public class ServerDialback {
         else {
             // Include the invalid-namespace stream error condition in the response
             writer.write(new StreamError(StreamError.Condition.invalid_namespace).toXML());
+            writer.write("</stream:stream>");
             writer.flush();
             // Thrown an error so <remote-connection-failed/> stream error condition is
             // sent to the Originating Server
             throw new RemoteConnectionFailedException("Invalid namespace");
         }
+        writer.write("</stream:stream>");
+        writer.flush();
         return result;
     }
 
@@ -808,11 +846,6 @@ public class ServerDialback {
         }
         finally {
             try {
-                // Close the stream
-                StringBuilder sb = new StringBuilder();
-                sb.append("</stream:stream>");
-                writer.write(sb.toString());
-                writer.flush();
                 // Close the TCP connection
                 socket.close();
             }
@@ -891,9 +924,9 @@ public class ServerDialback {
      */
     private static String getSecretkey() {
         String key = "secretKey";
-        Lock lock = CacheFactory.getLock(key, secretKeyCache);
+        Lock lock = secretKeyCache.getLock(key);
+        lock.lock();
         try {
-            lock.lock();
             String secret = secretKeyCache.get(key);
             if (secret == null) {
                 secret = StringUtils.randomString(10);

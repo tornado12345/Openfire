@@ -19,6 +19,7 @@ package org.jivesoftware.openfire.pubsub;
 import java.io.Serializable;
 import java.io.StringReader;
 import java.util.Date;
+import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -107,8 +108,8 @@ public class PublishedItem implements Serializable {
      */
     PublishedItem(LeafNode node, JID publisher, String id, Date creationDate) {
         this.node = node;
-        this.nodeId = node.getNodeID();
-        this.serviceId = node.getService().getServiceID();
+        this.nodeId = node.getUniqueIdentifier().getNodeId();
+        this.serviceId = node.getUniqueIdentifier().getServiceIdentifier().getServiceId();
         this.publisher = publisher;
         this.id = id;
         this.creationDate = creationDate;
@@ -139,8 +140,8 @@ public class PublishedItem implements Serializable {
                     else
                     {
                         PEPServiceManager serviceMgr = XMPPServer.getInstance().getIQPEPHandler().getServiceManager();
-                        node = serviceMgr.hasCachedService(new JID(serviceId)) ? (LeafNode) serviceMgr.getPEPService(
-                                serviceId).getNode(nodeId) : null;
+                        JID service = new JID( serviceId );
+                        node = serviceMgr.hasCachedService(service) ? (LeafNode) serviceMgr.getPEPService(service).getNode(nodeId) : null;
                     }
                 }
             }
@@ -180,7 +181,7 @@ public class PublishedItem implements Serializable {
      * have a payload. Transient nodes that are configured to not broadcast payloads may allow
      * published items to have no payload.
      *
-     * @return the payload included when publishing the item or <tt>null</tt> if none was found.
+     * @return the payload included when publishing the item or {@code null} if none was found.
      */
     public Element getPayload() {
         if (payload == null && payloadXML != null) {
@@ -205,7 +206,7 @@ public class PublishedItem implements Serializable {
     }
 
     /**
-     * Returns a textual representation of the payload or <tt>null</tt> if no payload
+     * Returns a textual representation of the payload or {@code null} if no payload
      * was specified with the item.
      *
      * @return a textual representation of the payload or null if no payload was specified
@@ -220,7 +221,7 @@ public class PublishedItem implements Serializable {
      * have a payload. Transient nodes that are configured to not broadcast payloads may allow
      * published items to have no payload.
      *
-     * @param payloadXML the payload included when publishing the item or <tt>null</tt>
+     * @param payloadXML the payload included when publishing the item or {@code null}
      *        if none was found.
      */
     void setPayloadXML(String payloadXML) {
@@ -233,7 +234,7 @@ public class PublishedItem implements Serializable {
      * have a payload. Transient nodes that are configured to not broadcast payloads may allow
      * published items to have no payload.
      *
-     * @param payload the payload included when publishing the item or <tt>null</tt>
+     * @param payload the payload included when publishing the item or {@code null}
      *        if none was found.
      */
     void setPayload(Element payload) {
@@ -248,7 +249,7 @@ public class PublishedItem implements Serializable {
 
     /**
      * Returns true if payload contains the specified keyword. If the item has no payload
-     * or keyword is <tt>null</tt> then return true.
+     * or keyword is {@code null} then return true.
      *
      * @param keyword the keyword to look for in the payload.
      * @return true if payload contains the specified keyword.
@@ -274,23 +275,35 @@ public class PublishedItem implements Serializable {
     }
 
     /**
-     * Returns a string that uniquely identifies this published item
-     * in the following format: <i>nodeId:itemId</i>
+     * Returns a string that uniquely identifies this published item in the following format: <i>nodeId:itemId</i>
+     *
+     * Note that this method generates a value that's unique only in context of the node. This allows for different
+     * services to have items with identical keys. Use {@link #getUniqueIdentifier()} to obtain an identifier that is
+     * unique for the entire XMPP domain.
+     *
      * @return Unique identifier for this item
+     * @deprecated Replaced by {@link #getUniqueIdentifier()} which generates more unique values.
      */
+    @Deprecated
     public String getItemKey() {
-        return getItemKey(serviceId, nodeId,id);
+        return getItemKey(serviceId, nodeId, id);
     }
 
     /**
-     * Returns a string that uniquely identifies this published item
-     * in the following format: <i>nodeId:itemId</i>
+     * Returns a string that uniquely identifies this published item in the following format: <i>nodeId:itemId</i>
+     *
+     * Note that this method generates a value that's unique only in context of the node. This allows for different
+     * services to have items with identical keys. Use {@link #getUniqueIdentifier(LeafNode, String)} to obtain an
+     * identifier that is unique for the entire XMPP domain.
+     *
      * @param node Node for the published item
      * @param itemId Id for the published item (unique within the node)
      * @return Unique identifier for this item
+     * @deprecated Replaced by {@link #getUniqueIdentifier(LeafNode, String)} which generates more unique values.
      */
+    @Deprecated
     public static String getItemKey(LeafNode node, String itemId) {
-        return getItemKey(node.getService().getServiceID(), node.getNodeID(), itemId);
+        return getItemKey(node.getUniqueIdentifier().getServiceIdentifier().getServiceId(), node.getUniqueIdentifier().getNodeId(), itemId);
     }
 
     /**
@@ -300,8 +313,123 @@ public class PublishedItem implements Serializable {
      * @param nodeId Node id for the published item
      * @param itemId Id for the published item (unique within the node)
      * @return Unique identifier for this item
+     * @deprecated Replaced by {@link #getUniqueIdentifier(String, String, String)} which generates more unique values.
      */
-    private static String getItemKey(String serviceId, String nodeId, String itemId) {
-        return serviceId + ":" + nodeId +":" + itemId;
+    @Deprecated
+    public static String getItemKey(String serviceId, String nodeId, String itemId) {
+    	return new StringBuilder(serviceId).append(nodeId)
+    		.append(':').append(itemId).toString();
+    }
+
+    /**
+     * Returns a value that uniquely identifies this published item in the XMPP domain.
+     *
+     * @return Unique identifier for this item
+     */
+    public UniqueIdentifier getUniqueIdentifier() {
+        return getUniqueIdentifier( getNode(), id );
+    }
+
+    /**
+     * Returns a value that uniquely identifies this published item in the XMPP domain.
+     *
+     * @param node Node for the published item
+     * @param itemId Id for the published item (unique within the node)
+     * @return Unique identifier for this item
+     */
+    public static UniqueIdentifier getUniqueIdentifier(LeafNode node, String itemId)
+    {
+        return getUniqueIdentifier( node.getUniqueIdentifier().getServiceIdentifier().getServiceId(), node.getUniqueIdentifier().getNodeId(), itemId );
+    }
+
+    /**
+     * Returns a value that uniquely identifies this published item in the XMPP domain.
+     *
+     * @param serviceId Id of the service that contains the node.
+     * @param nodeId Node id for the published item
+     * @param itemId Id for the published item (unique within the node)
+     * @return Unique identifier for this item
+     */
+    public static UniqueIdentifier getUniqueIdentifier(String serviceId, String nodeId, String itemId)
+    {
+        return new UniqueIdentifier( serviceId, nodeId, itemId );
+    }
+
+    /**
+     * A unique identifier for an item, in context of all nodes of all services in the system.
+     *
+     * The properties that uniquely identify an item are its node, and its itemId.
+     */
+    public final static class UniqueIdentifier implements Serializable
+    {
+        private final String serviceId;
+        private final String nodeId;
+        private final String itemId;
+
+        public UniqueIdentifier( final String serviceId, final String nodeId, final String itemId ) {
+            if ( serviceId == null ) {
+                throw new IllegalArgumentException( "Argument 'serviceId' cannot be null." );
+            }
+            if ( nodeId == null ) {
+                throw new IllegalArgumentException( "Argument 'nodeId' cannot be null." );
+            }
+            if ( itemId == null ) {
+                throw new IllegalArgumentException( "Argument 'itemId' cannot be null." );
+            }
+            this.serviceId = serviceId;
+            this.nodeId = nodeId;
+            this.itemId = itemId;
+        }
+
+        public UniqueIdentifier( final Node.UniqueIdentifier nodeIdentifier, final String itemId ) {
+            if ( nodeIdentifier == null ) {
+                throw new IllegalArgumentException( "Argument 'nodeIdentifier' cannot be null." );
+            }
+            if ( itemId == null ) {
+                throw new IllegalArgumentException( "Argument 'itemId' cannot be null." );
+            }
+            this.serviceId = nodeIdentifier.getServiceIdentifier().getServiceId();
+            this.nodeId = nodeIdentifier.getNodeId();
+            this.itemId = itemId;
+        }
+
+        public PubSubService.UniqueIdentifier getServiceIdentifier()
+        {
+            return new PubSubService.UniqueIdentifier( serviceId );
+        }
+
+        public Node.UniqueIdentifier getNodeIdentifier()
+        {
+            return new Node.UniqueIdentifier( serviceId, nodeId );
+        }
+
+        public String getItemId() { return itemId; };
+
+        @Override
+        public boolean equals( final Object o )
+        {
+            if ( this == o ) { return true; }
+            if ( o == null || getClass() != o.getClass() ) { return false; }
+            final UniqueIdentifier that = (UniqueIdentifier) o;
+            return serviceId.equals(that.serviceId) &&
+                nodeId.equals(that.nodeId) &&
+                itemId.equals(that.itemId);
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hash(serviceId, nodeId, itemId);
+        }
+
+        @Override
+        public String toString()
+        {
+            return "UniqueIdentifier{" +
+                "serviceId='" + serviceId + '\'' +
+                ", nodeId='" + nodeId + '\'' +
+                ", itemId='" + itemId + '\'' +
+                '}';
+        }
     }
 }

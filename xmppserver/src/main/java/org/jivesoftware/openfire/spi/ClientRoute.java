@@ -46,6 +46,10 @@ public class ClientRoute implements Cacheable, Externalizable {
         return nodeID;
     }
 
+    public void setNodeID( final NodeID nodeID )
+    {
+        this.nodeID = nodeID;
+    }
 
     public boolean isAvailable() {
         return available;
@@ -84,5 +88,14 @@ public class ClientRoute implements Cacheable, Externalizable {
             nodeID = NodeID.getInstance(bytes);
         }
         available = ExternalizableUtil.getInstance().readBoolean(in);
+    }
+
+    @Override
+    public String toString()
+    {
+        return "ClientRoute{" +
+            "nodeID=" + nodeID +
+            ", available=" + available +
+            '}';
     }
 }

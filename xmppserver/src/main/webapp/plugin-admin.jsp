@@ -15,20 +15,20 @@
   - limitations under the License.
 --%>
 
-<%@ page import="org.apache.commons.fileupload.FileItem,
+<%@ page import="java.io.InputStream,
+                 java.util.List,
+                 org.apache.commons.fileupload.FileItem,
                  org.apache.commons.fileupload.FileItemFactory,
                  org.apache.commons.fileupload.FileUploadException,
                  org.apache.commons.fileupload.disk.DiskFileItemFactory,
-                 org.apache.commons.fileupload.servlet.ServletFileUpload,
-                 org.jivesoftware.openfire.XMPPServer,
-                 org.jivesoftware.openfire.container.PluginManager"
+                 org.apache.commons.fileupload.servlet.ServletFileUpload"
         %>
+<%@ page import="org.jivesoftware.openfire.XMPPServer" %>
+<%@ page import="org.jivesoftware.openfire.container.PluginManager" %>
 <%@ page import="org.jivesoftware.openfire.update.UpdateManager" %>
-<%@ page import="org.jivesoftware.util.*" %>
-<%@ page import="java.io.InputStream" %>
-<%@ page import="java.util.List" %>
-<%@ page import="org.slf4j.LoggerFactory" %>
 <%@ page import="org.slf4j.Logger" %>
+<%@ page import="org.slf4j.LoggerFactory" %>
+<%@ page import="org.jivesoftware.util.*" %>
 
 <%@ taglib uri="admin" prefix="admin" %>
 <%@ taglib uri="http://java.sun.com/jsp/jstl/core" prefix="c" %>
@@ -45,7 +45,9 @@
     boolean downloadRequested = request.getParameter("download") != null;
     boolean uploadPlugin = request.getParameter("uploadplugin") != null;
     String url = request.getParameter("url");
-    Boolean uploadEnabled = JiveGlobals.getBooleanProperty("plugins.upload.enabled", true);
+    boolean uploadEnabled = JiveGlobals.getBooleanProperty("plugins.upload.enabled", true);
+    boolean contentTypeCheckEnabled = JiveGlobals.getBooleanProperty("plugins.upload.content-type-check.enabled", false);
+    String expectedContentType = JiveGlobals.getProperty("plugins.upload.content-type-check.expected-value", "application/x-java-archive");
     boolean csrf_check = true;
 
     final PluginManager pluginManager = webManager.getXMPPServer().getPluginManager();
@@ -105,28 +107,34 @@
 
         try {
             // Parse the request
-            List items = upload.parseRequest(request);
+            List<FileItem> items = upload.parseRequest(request);
 
-            for (Object objItem : items) {
-                FileItem item = (FileItem)objItem;
+            for (FileItem item : items) {
                 String fileName = item.getName();
-                if (fileName != null) {
-                    InputStream is = item.getInputStream();
-                    if (is != null) {
-                        installed = XMPPServer.getInstance().getPluginManager().installPlugin(is, fileName);
-                        if (!installed) {
-                            Log.error("Plugin manager failed to install plugin: " + fileName);
-                        }
-                        is.close();
-                        // Log the event
-                        webManager.logEvent("uploaded plugin "+fileName, null);
+                String contentType = item.getContentType();
+                Log.debug("Uploaded plugin '{}' content type: '{}'.", fileName, contentType );
+                if (fileName == null) {
+                    Log.error( "Ignoring uploaded file: No filename specified for file upload." );
+                    continue;
+                }
+
+                if (contentTypeCheckEnabled && !expectedContentType.equalsIgnoreCase( contentType )) {
+                    Log.error( "Ignoring uploaded file: Content type '{}' of uploaded file '{}' does not match expected content type '{}'", contentType, fileName, expectedContentType );
+                    continue;
+                }
+
+                InputStream is = item.getInputStream();
+                if (is != null) {
+                    installed = XMPPServer.getInstance().getPluginManager().installPlugin(is, fileName);
+                    if (!installed) {
+                        Log.error("Plugin manager failed to install plugin: " + fileName);
                     }
-                    else {
-                        Log.error("Unable to open file stream for uploaded file: " + fileName);
-                    }
+                    is.close();
+                    // Log the event
+                    webManager.logEvent("uploaded plugin "+fileName, null);
                 }
                 else {
-                    Log.error("No filename specified for file upload.");
+                    Log.error("Unable to open file stream for uploaded file: " + fileName);
                 }
             }
         }
@@ -300,10 +308,10 @@ tr.lowerhalf > td:last-child {
 
 
 <script type="text/javascript">
-    function download(url, hashCode) {
+    function download(url, version, hashCode) {
         document.getElementById(hashCode + "-row").style.display = 'none';
         document.getElementById(hashCode + "-update").style.display = '';
-        downloader.installPlugin(url, hashCode, downloadComplete);
+        downloader.installPlugin(url, version, hashCode, downloadComplete);
     }
 
     function downloadComplete(status) {
@@ -311,6 +319,7 @@ tr.lowerhalf > td:last-child {
         document.getElementById(status.hashCode + "-update").style.display = '';
         document.getElementById(status.hashCode + "-image").innerHTML = '<img src="images/success-16x16.gif" border="0" alt=""/>';
         document.getElementById(status.hashCode + "-text").innerHTML = '<fmt:message key="plugin.admin.update.complete" />';
+        document.getElementById(status.hashCode + "-version").innerHTML = '<span style="text-decoration: line-through;">' + document.getElementById(status.hashCode + "-version").innerHTML + '</span><br>' + status.version;
     }
 </script>
 </head>
@@ -429,7 +438,9 @@ tr.lowerhalf > td:last-child {
             </td>
             <td width="5%" nowrap valign="top">
                 <c:if test="${not empty plugin.version}">
+                    <span <c:if test="${not empty update}">id="${update.hashCode()}-version"</c:if>>
                     <c:out value="${plugin.version}"/>
+                    </span>
                 </c:if>
             </td>
             <td width="15%" nowrap valign="top">
@@ -498,8 +509,8 @@ tr.lowerhalf > td:last-child {
                 <td>
                     <table>
                         <tr>
-                            <td><a href="javascript:download('${update.URL}', '${update.hashCode()}')"><img src="images/icon_update-16x16.gif" width="16" height="16" border="0" alt="changelog"></a></td>
-                            <td><a href="javascript:download('${update.URL}', '${update.hashCode()}')"><span class="small-label"><fmt:message key="plugin.admin.update" /></span></a></td>
+                            <td><a href="javascript:download('${update.URL}', '${update.latestVersion}', '${update.hashCode()}')"><img src="images/icon_update-16x16.gif" width="16" height="16" border="0" alt="changelog"></a></td>
+                            <td><a href="javascript:download('${update.URL}', '${update.latestVersion}', '${update.hashCode()}')"><span class="small-label"><fmt:message key="plugin.admin.update" /></span></a></td>
                         </tr>
                     </table>
                 </td>

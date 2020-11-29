@@ -108,17 +108,6 @@ public abstract class VirtualConnection implements Connection {
     }
 
     @Override
-    public boolean isFlashClient() {
-        // Return false since flash clients is not used for virtual connections
-        return false;
-    }
-
-    @Override
-    public void setFlashClient(boolean flashClient) {
-        //Ignore
-    }
-
-    @Override
     public void setXMPPVersion(int majorVersion, int minorVersion) {
         //Ignore
     }
@@ -172,6 +161,16 @@ public abstract class VirtualConnection implements Connection {
     @Override
     public void reinit(LocalSession session) {
         this.session = session;
+
+        // ConnectionCloseListeners are registered with their session instance as a callback object. When re-initializing,
+        // this object needs to be replaced with the new session instance (or otherwise, the old session will be used
+        // during the callback. OF-2014
+        for ( final Map.Entry<ConnectionCloseListener, Object> entry : listeners.entrySet() )
+        {
+            if ( entry.getValue() instanceof LocalSession ) {
+                entry.setValue( session );
+            }
+        }
     }
 
     /**
@@ -198,6 +197,7 @@ public abstract class VirtualConnection implements Connection {
             // their session was closed. Effectively, the bug prevents the MUC room from getting a
             // presence update to notify it that the user logged off.
             notifyCloseListeners();
+            listeners.clear();
 
             try {
                 closeVirtualConnection();

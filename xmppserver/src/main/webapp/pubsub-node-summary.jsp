@@ -15,6 +15,7 @@
 %>
 
 <%@ taglib uri="http://java.sun.com/jsp/jstl/core" prefix="c"%>
+<%@ taglib uri="http://java.sun.com/jsp/jstl/functions" prefix="fn" %>
 <%@ taglib uri="http://java.sun.com/jsp/jstl/fmt" prefix="fmt" %>
 <%@ taglib uri="admin" prefix="admin" %>
 
@@ -46,7 +47,7 @@
     {
         pubSubServiceInfo = webManager.getPubSubInfo();
     }
-    else if ( new PEPServiceManager().getPEPService( owner.toBareJID() ) != null )
+    else if ( XMPPServer.getInstance().getIQPEPHandler().getServiceManager().getPEPService( owner.asBareJID(), true ) != null )
     {
         PEPMode = true;
         pubSubServiceInfo = new PEPServiceInfo( owner );
@@ -60,7 +61,7 @@
     if ( pubSubServiceInfo != null )
     {
         nodes = pubSubServiceInfo.getLeafNodes();
-        nodes.sort(Comparator.comparing(node -> node.getNodeID().toLowerCase()));
+        nodes.sort(Comparator.comparing(node -> node.getUniqueIdentifier().getNodeId().toLowerCase()));
     }
     else
     {
@@ -72,7 +73,7 @@
     final String searchNodeId = ParamUtils.getStringParameter(request, "searchNodeId", "");
     if(!searchNodeId.trim().isEmpty()) {
         final String searchCriteria = searchNodeId.trim().toLowerCase();
-        filter = filter.and(node -> node.getNodeID().toLowerCase().contains(searchCriteria));
+        filter = filter.and(node -> node.getUniqueIdentifier().getNodeId().toLowerCase().contains(searchCriteria));
     }
     final String searchNodeName = ParamUtils.getStringParameter(request, "searchNodeName", "");
     if(!searchNodeName.trim().isEmpty()) {
@@ -110,22 +111,15 @@
     </head>
     <body>
 
+<c:if test="${param.deleteSuccess}">
+    <admin:infoBox type="success">
+        <fmt:message key="pubsub.node.summary.deleted" />
+    </admin:infoBox>
+</c:if>
+
 <p>
 <fmt:message key="pubsub.node.summary.info" />
 </p>
-
-<c:if test="${param.deleteSuccess}">
-    <div class="jive-success">
-    <table cellpadding="0" cellspacing="0" border="0">
-    <tbody>
-        <tr><td class="jive-icon"><img src="images/success-16x16.gif" width="16" height="16" border="0" alt=""></td>
-        <td class="jive-icon-label">
-        <fmt:message key="pubsub.node.summary.deleted" />
-        </td></tr>
-    </tbody>
-    </table>
-    </div><br>
-</c:if>
 
 <p>
 <fmt:message key="pubsub.node.summary.total_nodes" />: <c:out value="${listPager.totalItemCount}"/>
@@ -156,6 +150,7 @@
         <c:if test="${not PEPMode}" >
             <th nowrap><fmt:message key="global.edit" /></th>
         </c:if>
+        <th nowrap><fmt:message key="pubsub.node.summary.configuration" /></th>
         <th nowrap><fmt:message key="global.delete" /></th>
     </tr>
     <tr>
@@ -164,7 +159,7 @@
             <input type="search"
                    id="searchNodeId"
                    size="20"
-                   value="<c:out value="${searchNodeId}"/>"/>
+                   value="${fn:escapeXml(searchNodeId)}"/>
             <img src="images/search-16x16.png"
                  width="16" height="16"
                  alt="search" title="search"
@@ -176,7 +171,7 @@
             <input type="search"
                    id="searchNodeName"
                    size="20"
-                   value="<c:out value="${searchNodeName}"/>"/>
+                   value="${fn:escapeXml(searchNodeName)}"/>
             <img src="images/search-16x16.png"
                  width="16" height="16"
                  alt="search" title="search"
@@ -188,7 +183,7 @@
             <input type="search"
                    id="searchNodeDescription"
                    size="20"
-                   value="<c:out value="${searchNodeDescription}"/>"/>
+                   value="${fn:escapeXml(searchNodeDescription)}"/>
              <img src="images/search-16x16.png"
                  width="16" height="16"
                  alt="search" title="search"
@@ -202,6 +197,7 @@
         <c:if test="${not PEPMode}">
             <td></td>
         </c:if>
+        <td></td>
         <td></td>
     </tr>
 </thead>
@@ -271,6 +267,15 @@
                 </a>
             </td>
         </c:if>
+        <td width="1%" align="center">
+            <c:url value="pubsub-node-configuration.jsp" var="url">
+                <c:param name="nodeID" value="${node.nodeID}" />
+                <c:param name="owner" value="${owner}" />
+            </c:url>
+            <a href="${url}" title="<fmt:message key="pubsub.node.summary.click_config" />">
+                <img src="images/info-16x16.gif" width="16" height="16" border="0" alt="">
+            </a>
+        </td>
         <td width="1%" align="center" style="border-right:1px #ccc solid;">
             <c:url value="pubsub-node-delete.jsp" var="url">
                 <c:param name="nodeID" value="${node.nodeID}" />

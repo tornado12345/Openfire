@@ -34,6 +34,12 @@ public interface ClusterEventListener {
      * <p>At this point the CacheFactory holds clustered caches. That means that modifications
      * to the caches will be reflected in the cluster. The clustered caches were just
      * obtained from the cluster and no local cached data was automatically moved.</p>
+     *
+     * It is generally advisable that implementations of this method:
+     * <ul>
+     *     <li>enrich clustered cache data, by (re)adding  data from this JVM/cluster node to relevant caches</li>
+     *     <li>invoke applicable event listeners, to reflect changes in availability of data on other cluster nodes.</li>
+     * </ul>
      */
     void joinedCluster();
 
@@ -55,13 +61,19 @@ public interface ClusterEventListener {
      *
      * Moreover, if we were in a "split brain" scenario (ie. separated cluster islands) and the
      * island were this JVM belonged was marked as "old" then all nodes of that island will
-     * get the <tt>left cluster event</tt> and <tt>joined cluster events</tt>. That means that
+     * get the {@code left cluster event} and {@code joined cluster events}. That means that
      * caches will be reset and thus will need to be repopulated again with fresh data from this JVM.
      * This also includes the case where this JVM was the senior cluster member and when the islands
      * met again then this JVM stopped being the senior member.<p>
      *
      * At this point the CacheFactory holds local caches. That means that modifications to
      * the caches will only affect this JVM.
+     *
+     * It is generally advisable that implementations of this method:
+     * <ul>
+     *     <li>restore relevant caches content, by repopulating the caches with data from this JVM/cluster node</li>
+     *     <li>invoke applicable event listeners, to reflect changes in availability of data on other cluster nodes.</li>
+     * </ul>
      */
     void leftCluster();
 
@@ -72,13 +84,17 @@ public interface ClusterEventListener {
      *
      * Moreover, if we were in a "split brain" scenario (ie. separated cluster islands) and the
      * island were the other JVM belonged was marked as "old" then all nodes of that island will
-     * get the <tt>left cluster event</tt> and <tt>joined cluster events</tt>. That means that
+     * get the {@code left cluster event} and {@code joined cluster events}. That means that
      * caches will be reset and thus will need to be repopulated again with fresh data from this JVM.
      * This also includes the case where the other JVM was the senior cluster member and when the islands
      * met again then the other JVM stopped being the senior member.<p>
      *
      * At this point the CacheFactory of the leaving node holds local caches. That means that modifications to
      * the caches of this JVM will not affect the leaving node but other cluster members.
+     *
+     * It is generally advisable that implementations of this method invoke applicable event listeners, to reflect
+     * changes in availability of data (related to the node that left). Often, this action is orchestrated by only
+     * one of the remaining cluster nodes: the senior member.
      *
      * @param nodeID ID of the node that is left the cluster.
      */

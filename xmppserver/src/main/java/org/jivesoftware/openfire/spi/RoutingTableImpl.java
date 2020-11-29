@@ -18,7 +18,14 @@ package org.jivesoftware.openfire.spi;
 
 import org.dom4j.Element;
 import org.dom4j.QName;
-import org.jivesoftware.openfire.*;
+import org.jivesoftware.openfire.IQRouter;
+import org.jivesoftware.openfire.MessageRouter;
+import org.jivesoftware.openfire.PacketException;
+import org.jivesoftware.openfire.PresenceRouter;
+import org.jivesoftware.openfire.RemotePacketRouter;
+import org.jivesoftware.openfire.RoutableChannelHandler;
+import org.jivesoftware.openfire.RoutingTable;
+import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.auth.UnauthorizedException;
 import org.jivesoftware.openfire.carbons.Received;
 import org.jivesoftware.openfire.cluster.ClusterEventListener;
@@ -30,17 +37,36 @@ import org.jivesoftware.openfire.forward.Forwarded;
 import org.jivesoftware.openfire.handler.PresenceUpdateHandler;
 import org.jivesoftware.openfire.server.OutgoingSessionPromise;
 import org.jivesoftware.openfire.server.RemoteServerManager;
-import org.jivesoftware.openfire.session.*;
+import org.jivesoftware.openfire.session.ClientSession;
+import org.jivesoftware.openfire.session.ConnectionSettings;
+import org.jivesoftware.openfire.session.DomainPair;
+import org.jivesoftware.openfire.session.LocalClientSession;
+import org.jivesoftware.openfire.session.LocalOutgoingServerSession;
+import org.jivesoftware.openfire.session.OutgoingServerSession;
+import org.jivesoftware.openfire.session.RemoteSessionLocator;
 import org.jivesoftware.util.JiveGlobals;
 import org.jivesoftware.util.cache.Cache;
 import org.jivesoftware.util.cache.CacheFactory;
+import org.jivesoftware.util.cache.CacheUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.xmpp.packet.*;
+import org.xmpp.packet.IQ;
+import org.xmpp.packet.JID;
+import org.xmpp.packet.Message;
+import org.xmpp.packet.Packet;
+import org.xmpp.packet.Presence;
 
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
+import java.util.stream.Stream;
 
 /**
  * Routing table that stores routes to client sessions, outgoing server sessions
@@ -72,7 +98,7 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
      * Cache (unlimited, never expire) that holds outgoing sessions to remote servers from this server.
      * Key: server domain pair, Value: nodeID
      */
-    private Cache<DomainPair, byte[]> serversCache;
+    private Cache<DomainPair, NodeID> serversCache;
     /**
      * Cache (unlimited, never expire) that holds components connected to the server.
      * Key: component domain, Value: list of nodeIDs hosting the component
@@ -117,10 +143,10 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
     @Override
     public void addServerRoute(DomainPair address, LocalOutgoingServerSession destination) {
         localRoutingTable.addRoute(address, destination);
-        Lock lock = CacheFactory.getLock(address, serversCache);
+        Lock lock = serversCache.getLock(address);
+        lock.lock();
         try {
-            lock.lock();
-            serversCache.put(address, server.getNodeID().toByteArray());
+            serversCache.put(address, server.getNodeID());
         }
         finally {
             lock.unlock();
@@ -132,17 +158,12 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
         DomainPair pair = new DomainPair("", route.getDomain());
         String address = route.getDomain();
         localRoutingTable.addRoute(pair, destination);
-        Lock lock = CacheFactory.getLock(address, componentsCache);
+        Lock lock = componentsCache.getLock(address);
+        lock.lock();
         try {
-            lock.lock();
             HashSet<NodeID> nodes = componentsCache.get(address);
             if (nodes == null) {
                 nodes = new HashSet<>();
-            }
-            // Remove an orphan entry (if any) in the routing table; mainly for clustering
-            if (nodes.remove(server.getDefaultNodeID())) {
-                Log.debug("Replacing DEFAULT_NODE_ID with \"{}\" for component {}",
-                    server.getNodeID(), route);
             }
             nodes.add(server.getNodeID());
             componentsCache.put(address, nodes);
@@ -158,9 +179,9 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
         Log.debug("Adding client route {}", route);
         localRoutingTable.addRoute(new DomainPair("", route.toString()), destination);
         if (destination.getAuthToken().isAnonymous()) {
-            Lock lockAn = CacheFactory.getLock(route.toString(), anonymousUsersCache);
+            Lock lockAn = anonymousUsersCache.getLock(route.toString());
+            lockAn.lock();
             try {
-                lockAn.lock();
                 added = anonymousUsersCache.put(route.toString(), new ClientRoute(server.getNodeID(), available)) ==
                         null;
             }
@@ -169,9 +190,9 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
             }
             // Add the session to the list of user sessions
             if (route.getResource() != null && (!available || added)) {
-                Lock lock = CacheFactory.getLock(route.toBareJID(), usersSessions);
+                Lock lock = usersSessions.getLock(route.toBareJID());
+                lock.lock();
                 try {
-                    lock.lock();
                     usersSessions.put(route.toBareJID(), new HashSet<>(Collections.singletonList(route.toString())));
                 }
                 finally {
@@ -180,9 +201,9 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
             }
         }
         else {
-            Lock lockU = CacheFactory.getLock(route.toString(), usersCache);
+            Lock lockU = usersCache.getLock(route.toString());
+            lockU.lock();
             try {
-                lockU.lock();
                 added = usersCache.put(route.toString(), new ClientRoute(server.getNodeID(), available)) == null;
             }
             finally {
@@ -190,9 +211,9 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
             }
             // Add the session to the list of user sessions
             if (route.getResource() != null && (!available || added)) {
-                Lock lock = CacheFactory.getLock(route.toBareJID(), usersSessions);
+                Lock lock = usersSessions.getLock(route.toBareJID());
+                lock.lock();
                 try {
-                    lock.lock();
                     HashSet<String> jids = usersSessions.get(route.toBareJID());
                     if (jids == null) {
                         jids = new HashSet<>();
@@ -242,11 +263,11 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
             }
             else if (jid.getDomain().endsWith(serverName) && hasComponentRoute(jid)) {
                 // Packet sent to component hosted in this server
-                routed = routeToComponent(jid, packet, routed);
+                routed = routeToComponent(jid, packet);
             }
             else {
                 // Packet sent to remote server
-                routed = routeToRemoteDomain(jid, packet, routed);
+                routed = routeToRemoteDomain(jid, packet);
             }
         } catch (Exception ex) {
             // Catch here to ensure that all packets get handled, despite various processing
@@ -287,13 +308,13 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
      * @throws PacketException
      *             thrown if the packet is malformed (results in the sender's
      *             session being shutdown).
-     * @return <tt>true</tt> if the packet was routed successfully,
-     *         <tt>false</tt> otherwise.
+     * @return {@code true} if the packet was routed successfully,
+     *         {@code false} otherwise.
      */
     private boolean routeToLocalDomain(JID jid, Packet packet,
             boolean fromServer) {
         boolean routed = false;
-        Element privateElement = packet.getElement().element(QName.get("private", "urn:xmpp:carbons:2"));
+        Element privateElement = packet.getElement().element(QName.get("private", Received.NAMESPACE));
         boolean isPrivate = privateElement != null;
         // The receiving server and SHOULD remove the <private/> element before delivering to the recipient.
         packet.getElement().remove(privateElement);
@@ -310,45 +331,17 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
         }
         else {
             // Packet sent to local user (full JID)
-            ClientRoute clientRoute = usersCache.get(jid.toString());
-            if (clientRoute == null) {
-                clientRoute = anonymousUsersCache.get(jid.toString());
-            }
+            ClientRoute clientRoute = getClientRouteForLocalUser(jid);
             if (clientRoute != null) {
                 if (!clientRoute.isAvailable() && routeOnlyAvailable(packet, fromServer) &&
-                        !presenceUpdateHandler.hasDirectPresence(packet.getTo(), packet.getFrom())) {
+		                !presenceUpdateHandler.hasDirectPresence(packet.getTo(), packet.getFrom())
+                        && !PresenceUpdateHandler.isPresenceUpdateReflection( packet )) {
                     Log.debug("Unable to route packet. Packet should only be sent to available sessions and the route is not available. {} ", packet.toXML());
                     routed = false;
                 } else {
                     if (localRoutingTable.isLocalRoute(jid)) {
-                        if (packet instanceof Message) {
-                            Message message = (Message) packet;
-                            if (message.getType() == Message.Type.chat && !isPrivate) {
-                                List<JID> routes = getRoutes(jid.asBareJID(), null);
-                                for (JID route : routes) {
-                                    // The receiving server MUST NOT send a forwarded copy to the full JID the original <message/> stanza was addressed to, as that recipient receives the original <message/> stanza.
-                                    if (!route.equals(jid)) {
-                                        ClientSession clientSession = getClientRoute(route);
-                                        if (clientSession.isMessageCarbonsEnabled()) {
-                                            Message carbon = new Message();
-                                            // The wrapping message SHOULD maintain the same 'type' attribute value;
-                                            carbon.setType(message.getType());
-                                            // the 'from' attribute MUST be the Carbons-enabled user's bare JID
-                                            carbon.setFrom(route.asBareJID());
-                                            // and the 'to' attribute MUST be the full JID of the resource receiving the copy
-                                            carbon.setTo(route);
-                                            // The content of the wrapping message MUST contain a <received/> element qualified by the namespace "urn:xmpp:carbons:2", which itself contains a <forwarded/> element qualified by the namespace "urn:xmpp:forward:0" that contains the original <message/>.
-                                            carbon.addExtension(new Received(new Forwarded(message)));
-
-                                            try {
-                                                localRoutingTable.getRoute(route).process(carbon);
-                                            } catch (UnauthorizedException e) {
-                                                Log.error("Unable to route packet " + packet.toXML(), e);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        if (!isPrivate && packet instanceof Message) {
+                            ccMessage(jid, (Message) packet);
                         }
 
                         // This is a route to a local user hosted in this node
@@ -375,6 +368,61 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
         return routed;
     }
 
+    private void ccMessage(JID originalRecipient, Message message) {
+        // We don't want to CC a message that is already a CC
+        final Element receivedElement = message.getChildElement(Received.NAME, Received.NAMESPACE);
+        final boolean isCC = receivedElement != null;
+        if (message.getType() == Message.Type.chat && !isCC) {
+            List<JID> routes = getRoutes(originalRecipient.asBareJID(), null);
+            for (JID ccJid : routes) {
+                // The receiving server MUST NOT send a forwarded copy to the full JID the original <message/> stanza was addressed to, as that recipient receives the original <message/> stanza.
+                if (!ccJid.equals(originalRecipient)) {
+                    ClientSession clientSession = getClientRoute(ccJid);
+                    if (clientSession.isMessageCarbonsEnabled()) {
+                        Message carbon = new Message();
+                        // The wrapping message SHOULD maintain the same 'type' attribute value;
+                        carbon.setType(message.getType());
+                        // the 'from' attribute MUST be the Carbons-enabled user's bare JID
+                        carbon.setFrom(ccJid.asBareJID());
+                        // and the 'to' attribute MUST be the full JID of the resource receiving the copy
+                        carbon.setTo(ccJid);
+                        // The content of the wrapping message MUST contain a <received/> element qualified by the namespace "urn:xmpp:carbons:2", which itself contains a <forwarded/> element qualified by the namespace "urn:xmpp:forward:0" that contains the original <message/>.
+                        carbon.addExtension(new Received(new Forwarded(message)));
+
+                        try {
+                            final RoutableChannelHandler localRoute = localRoutingTable.getRoute(ccJid);
+                            if (localRoute != null) {
+                                // This session is on a local cluster node
+                                localRoute.process(carbon);
+                            } else {
+                                // The session is not on a local cluster node, so try a remote
+                                final ClientRoute remoteRoute = getClientRouteForLocalUser(ccJid);
+                                if (remotePacketRouter != null // If we're in a cluster
+                                    && remoteRoute != null // and we've found a route to the other node
+                                    && !remoteRoute.getNodeID().equals(XMPPServer.getInstance().getNodeID())) { // and it really is a remote node
+                                    // Try and route the packet to the remote session
+                                    remotePacketRouter.routePacket(remoteRoute.getNodeID().toByteArray(), ccJid, carbon);
+                                } else {
+                                    Log.warn("Unable to find route to CC remote user {}", ccJid);
+                                }
+                            }
+                        } catch (UnauthorizedException e) {
+                            Log.error("Unable to route packet {}", message, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private ClientRoute getClientRouteForLocalUser(JID jid) {
+        ClientRoute clientRoute = usersCache.get(jid.toString());
+        if (clientRoute == null) {
+            clientRoute = anonymousUsersCache.get(jid.toString());
+        }
+        return clientRoute;
+    }
+
     /**
      * Routes packets that are sent to components of the XMPP domain (which are
      * subdomains of the XMPP domain)
@@ -386,17 +434,17 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
      * @throws PacketException
      *             thrown if the packet is malformed (results in the sender's
      *             session being shutdown).
-     * @return <tt>true</tt> if the packet was routed successfully,
-     *         <tt>false</tt> otherwise.
+     * @return {@code true} if the packet was routed successfully,
+     *         {@code false} otherwise.
      */
-    private boolean routeToComponent(JID jid, Packet packet,
-            boolean routed) {
+    private boolean routeToComponent(JID jid, Packet packet) {
         if (!hasComponentRoute(jid) 
                 && !ExternalComponentManager.hasConfiguration(jid.getDomain())) {
             return false;
         }
         
         // First check if the component is being hosted in this JVM
+        boolean routed = false;
         RoutableChannelHandler route = localRoutingTable.getRoute(new JID(null, jid.getDomain(), null, true));
         if (route != null) {
             try {
@@ -451,24 +499,23 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
      * @throws PacketException
      *             thrown if the packet is malformed (results in the sender's
      *             session being shutdown).
-     * @return <tt>true</tt> if the packet was routed successfully,
-     *         <tt>false</tt> otherwise.
+     * @return {@code true} if the packet was routed successfully,
+     *         {@code false} otherwise.
      */
-    private boolean routeToRemoteDomain(JID jid, Packet packet, boolean routed)
-    {
+    private boolean routeToRemoteDomain(JID jid, Packet packet) {
         if ( !JiveGlobals.getBooleanProperty( ConnectionSettings.Server.ALLOW_ANONYMOUS_OUTBOUND_DATA, false ) )
         {
             // Disallow anonymous local users to send data to other domains than the local domain.
             if ( isAnonymousRoute( packet.getFrom() ) )
             {
                 Log.info( "The anonymous user '{}' attempted to send data to '{}', which is on a remote domain. Openfire is configured to not allow anonymous users to send data to remote domains.", packet.getFrom(), jid );
-                routed = false;
-                return routed;
+                return false;
             }
         }
 
+        boolean routed = false;
         DomainPair pair = new DomainPair(packet.getFrom().getDomain(), jid.getDomain());
-        byte[] nodeID = serversCache.get(pair);
+        NodeID nodeID = serversCache.get(pair);
         if (nodeID != null) {
             if (server.getNodeID().equals(nodeID)) {
                 // This is a route to a remote server connected from this node
@@ -482,7 +529,7 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
             else {
                 // This is a route to a remote server connected from other node
                 if (remotePacketRouter != null) {
-                    routed = remotePacketRouter.routePacket(nodeID, jid, packet);
+                    routed = remotePacketRouter.routePacket(nodeID.toByteArray(), jid, packet);
                 }
             }
         }
@@ -539,8 +586,8 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
      * </ol>
      *
      * Admins can override the above logic and just send the message to all connected resources
-     * with highest priority by setting the system property <tt>route.all-resources</tt> to
-     * <tt>true</tt>.
+     * with highest priority by setting the system property {@code route.all-resources} to
+     * {@code true}.
      *
      * @param recipientJID the bare JID of the target local user.
      * @param packet the message to send.
@@ -613,13 +660,13 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
             // Many sessions have the highest priority (be smart now) :)
             if (!JiveGlobals.getBooleanProperty("route.all-resources", false)) {
                 // Sort sessions by show value (e.g. away, xa)
-                Collections.sort(highestPrioritySessions, new Comparator<ClientSession>() {
+                highestPrioritySessions.sort(new Comparator<ClientSession>() {
 
                     @Override
                     public int compare(ClientSession o1, ClientSession o2) {
                         int thisVal = getShowValue(o1);
                         int anotherVal = getShowValue(o2);
-                        return (thisVal<anotherVal ? -1 : (thisVal==anotherVal ? 0 : 1));
+                        return (Integer.compare(thisVal, anotherVal));
                     }
 
                     /**
@@ -629,17 +676,13 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
                         Presence.Show show = session.getPresence().getShow();
                         if (show == Presence.Show.chat) {
                             return 1;
-                        }
-                        else if (show == null) {
+                        } else if (show == null) {
                             return 2;
-                        }
-                        else if (show == Presence.Show.away) {
+                        } else if (show == Presence.Show.away) {
                             return 3;
-                        }
-                        else if (show == Presence.Show.xa) {
+                        } else if (show == Presence.Show.xa) {
                             return 4;
-                        }
-                        else {
+                        } else {
                             return 5;
                         }
                     }
@@ -658,12 +701,7 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
                 }
 
                 // Get session with most recent activity (and highest show value)
-                Collections.sort(targets, new Comparator<ClientSession>() {
-                    @Override
-                    public int compare(ClientSession o1, ClientSession o2) {
-                        return o2.getLastActiveDate().compareTo(o1.getLastActiveDate());
-                    }
-                });
+                targets.sort((o1, o2) -> o2.getLastActiveDate().compareTo(o1.getLastActiveDate()));
 
                 // Make sure, we don't send the packet again, if it has already been sent by message carbons.
                 ClientSession session = targets.get(0);
@@ -738,10 +776,7 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
             RemoteSessionLocator locator = server.getRemoteSessionLocator();
             if (locator != null) {
                 // Check if the session is hosted by other cluster node
-                ClientRoute route = usersCache.get(jid.toString());
-                if (route == null) {
-                    route = anonymousUsersCache.get(jid.toString());
-                }
+                ClientRoute route = getClientRouteForLocalUser(jid);
                 if (route != null) {
                     session = locator.getClientSession(route.getNodeID().toByteArray(), jid);
                 }
@@ -753,7 +788,7 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
     @Override
     public Collection<ClientSession> getClientsRoutes(boolean onlyLocal) {
         // Add sessions hosted by this cluster node
-        Collection<ClientSession> sessions = new ArrayList<ClientSession>(localRoutingTable.getClientRoutes());
+        Collection<ClientSession> sessions = new ArrayList<>(localRoutingTable.getClientRoutes());
         if (!onlyLocal) {
             // Add sessions not hosted by this JVM
             RemoteSessionLocator locator = server.getRemoteSessionLocator();
@@ -786,9 +821,9 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
             RemoteSessionLocator locator = server.getRemoteSessionLocator();
             if (locator != null) {
                 // Check if the session is hosted by other cluster node
-                byte[] nodeID = serversCache.get(jids);
+                NodeID nodeID = serversCache.get(jids);
                 if (nodeID != null) {
-                    session = locator.getOutgoingServerSession(nodeID, jids);
+                    session = locator.getOutgoingServerSession(nodeID.toByteArray(), jids);
                 }
             }
         }
@@ -826,7 +861,13 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
 
     @Override
     public boolean isAnonymousRoute(JID jid) {
-        return anonymousUsersCache.containsKey(jid.toString());
+        if ( jid.getResource() != null ) {
+            // Check if there's a anonymous route for the JID.
+            return anonymousUsersCache.containsKey( jid.toString() );
+        } else {
+            // Anonymous routes are mapped by full JID. if there's no full JID, check for any route for the node-part.
+            return anonymousUsersCache.keySet().stream().anyMatch( key -> key.startsWith( jid.toString() ) );
+        }
     }
 
     @Override
@@ -851,10 +892,7 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
             // Address belongs to local user
             if (route.getResource() != null) {
                 // Address is a full JID of a user
-                ClientRoute clientRoute = usersCache.get(route.toString());
-                if (clientRoute == null) {
-                    clientRoute = anonymousUsersCache.get(route.toString());
-                }
+                ClientRoute clientRoute = getClientRouteForLocalUser(route);
                 if (clientRoute != null &&
                         (clientRoute.isAvailable() || presenceUpdateHandler.hasDirectPresence(route, requester))) {
                     jids.add(route);
@@ -862,9 +900,9 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
             }
             else {
                 // Address is a bare JID so return all AVAILABLE resources of user
-                Lock lock = CacheFactory.getLock(route.toBareJID(), usersSessions);
+                Lock lock = usersSessions.getLock(route.toBareJID());
+                lock.lock(); // temporarily block new sessions for this JID
                 try {
-                    lock.lock(); // temporarily block new sessions for this JID
                     Collection<String> sessions = usersSessions.get(route.toBareJID());
                     if (sessions != null) {
                         // Select only available sessions
@@ -902,19 +940,19 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
     public boolean removeClientRoute(JID route) {
         boolean anonymous = false;
         String address = route.toString();
-        ClientRoute clientRoute = null;
-        Lock lockU = CacheFactory.getLock(address, usersCache);
+        ClientRoute clientRoute;
+        Lock lockU = usersCache.getLock(address);
+        lockU.lock();
         try {
-            lockU.lock();
             clientRoute = usersCache.remove(address);
         }
         finally {
             lockU.unlock();
         }
         if (clientRoute == null) {
-            Lock lockA = CacheFactory.getLock(address, anonymousUsersCache);
+            Lock lockA = anonymousUsersCache.getLock(address);
+            lockA.lock();
             try {
-                lockA.lock();
                 clientRoute = anonymousUsersCache.remove(address);
                 anonymous = true;
             }
@@ -923,9 +961,9 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
             }
         }
         if (clientRoute != null && route.getResource() != null) {
-            Lock lock = CacheFactory.getLock(route.toBareJID(), usersSessions);
+            Lock lock = usersSessions.getLock(route.toBareJID());
+            lock.lock();
             try {
-                lock.lock();
                 if (anonymous) {
                     usersSessions.remove(route.toBareJID());
                 }
@@ -953,11 +991,10 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
 
     @Override
     public boolean removeServerRoute(DomainPair route) {
-        String address = route.toString();
-        boolean removed = false;
-        Lock lock = CacheFactory.getLock(route, serversCache);
+        boolean removed;
+        Lock lock = serversCache.getLock(route);
+        lock.lock();
         try {
-            lock.lock();
             removed = serversCache.remove(route) != null;
         }
         finally {
@@ -981,9 +1018,9 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
     private boolean removeComponentRoute(JID route, NodeID nodeID) {
         String address = route.getDomain();
         boolean removed = false;
-        Lock lock = CacheFactory.getLock(address, componentsCache);
+        Lock lock = componentsCache.getLock(address);
+        lock.lock();
         try {
-            lock.lock();
             HashSet<NodeID> nodes = componentsCache.get(address);
             if (nodes != null) {
                 removed = nodes.remove(nodeID);
@@ -1034,17 +1071,34 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
     public void stop() {
         super.stop();
         localRoutingTable.stop();
+
+        try
+        {
+            // Purge our own components from the cache for the benefit of other cluster nodes.
+            CacheUtil.removeValueFromMultiValuedCache( componentsCache, XMPPServer.getInstance().getNodeID() );
+        }
+        catch ( Exception e )
+        {
+            Log.warn( "An exception occurred while trying to remove locally connected external components from the clustered cache. Other cluster nodes might continue to see our external components, even though we this instance is stopping.", e );
+        }
     }
 
     @Override
-    public void joinedCluster() {
+    public void joinedCluster()
+    {
+        // The local node joined a cluster.
+        //
+        // Upon joining a cluster, clustered caches are reset to their clustered equivalent (by the swap from the local
+        // cache implementation to the clustered cache implementation that's done in the implementation of
+        // org.jivesoftware.util.cache.CacheFactory.joinedCluster). This means that they now hold data that's
+        // available on all other cluster nodes. Data that's available on the local node needs to be added again.
         restoreCacheContent();
 
-        // Broadcast presence of local sessions to remote sessions when subscribed to presence
-        // Probe presences of remote sessions when subscribed to presence of local session
-        // Send pending subscription requests to local sessions from remote sessions
-        // Deliver offline messages sent to local sessions that were unavailable in other nodes
-        // Send available presences of local sessions to other resources of the same user
+        // Broadcast presence of local sessions to remote sessions when subscribed to presence.
+        // Probe presences of remote sessions when subscribed to presence of local session.
+        // Send pending subscription requests to local sessions from remote sessions.
+        // Deliver offline messages sent to local sessions that were unavailable in other nodes.
+        // Send available presences of local sessions to other resources of the same user.
         PresenceUpdateHandler presenceUpdateHandler = XMPPServer.getInstance().getPresenceUpdateHandler();
         for (LocalClientSession session : localRoutingTable.getClientRoutes()) {
             // Simulate that the local session has just became available
@@ -1052,87 +1106,83 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
             // Simulate that current session presence has just been received
             presenceUpdateHandler.process(session.getPresence());
         }
+        // TODO OF-2067: the above also (re)generates events on the local node, where these events had already occurred. Ideally, that should not happen.
+
+        // TODO OF-2066: shouldn't a similar action be done on the other nodes, so that the node that just joined gets informed about all sessions living on other cluster nodes?
     }
 
     @Override
     public void joinedCluster(byte[] nodeID) {
-        // Do nothing
+        // Another node joined a cluster that we're already part of. It is expected that
+        // the implementation of #joinedCluster() as executed on the cluster node that just
+        // joined will synchronize all relevant data. This method need not do anything.
     }
 
     @Override
     public void leftCluster() {
-        if (!XMPPServer.getInstance().isShuttingDown()) {
-            // Add local sessions to caches
-            restoreCacheContent();
+        // The local cluster node left the cluster.
+        if (XMPPServer.getInstance().isShuttingDown()) {
+            // Do not put effort in restoring the correct state if we're shutting down anyway.
+            return;
         }
+
+        // Upon leaving a cluster, clustered caches are reset to their local equivalent (by the swap from the clustered
+        // cache implementation to the default cache implementation that's done in the implementation of
+        // org.jivesoftware.util.cache.CacheFactory.leftCluster). This means that they now hold no data (as a new cache
+        // has been created). Data that's available on the local node needs to be added again.
+        restoreCacheContent();
+
+        // TODO OF-2066: all clients on other nodes are now unavailable! Send out the appropriate presence updates/events
     }
 
     @Override
-    public void leftCluster(byte[] nodeID) {
-        
+    public void leftCluster(byte[] nodeID)
+    {
+        // Another node left the cluster.
+
         // When a peer server leaves the cluster, any remote routes that were
         // associated with the defunct node must be dropped from the routing 
         // caches that are shared by the remaining cluster member(s).
-        
-        // drop routes for all client sessions connected via the defunct cluster node
-        Lock clientLock = CacheFactory.getLock(nodeID, usersCache);
-        try {
-            clientLock.lock();
-            List<String> remoteClientRoutes = new ArrayList<>();
-            for (Map.Entry<String, ClientRoute> entry : usersCache.entrySet()) {
-                if (entry.getValue().getNodeID().equals(nodeID)) {
-                    remoteClientRoutes.add(entry.getKey());
+
+        // Determine what components were available only on that node, and remove them.
+        // All remaining cluster nodes will be in a race to clean up the
+        // same data. The implementation below accounts for that, by only having the
+        // senior cluster node to perform the cleanup.
+        if (!ClusterManager.isSeniorClusterMember()) {
+            return;
+        }
+
+        // Drop routes for all client sessions connected via the defunct cluster node.
+        final AtomicLong removedSessionCount = new AtomicLong();
+        Stream.concat(usersCache.entrySet().stream(), anonymousUsersCache.entrySet().stream() )
+            .filter( entry -> entry.getValue().getNodeID().equals(nodeID))
+            .forEach( entry -> {
+                removedSessionCount.getAndIncrement();
+                final JID fullJID = new JID(entry.getKey());
+                removeClientRoute(fullJID);
+                if ( entry.getValue().isAvailable() )
+                {
+                    // Simulate that the session has just gone offline
+                    final Presence offline = new Presence();
+                    offline.setFrom(fullJID);
+                    offline.setTo(new JID(null, serverName, null, true));
+                    offline.setType(Presence.Type.unavailable);
+                    XMPPServer.getInstance().getPacketRouter().route(offline);
                 }
-            }
-            for (Map.Entry<String, ClientRoute> entry : anonymousUsersCache.entrySet()) {
-                if (entry.getValue().getNodeID().equals(nodeID)) {
-                    remoteClientRoutes.add(entry.getKey());
-                }
-            }
-            for (String route : remoteClientRoutes) {
-                removeClientRoute(new JID(route));
-            }
-        }
-        finally {
-            clientLock.unlock();
-        }
-        
-        // remove routes for server domains that were accessed through the defunct node
-        Lock serverLock = CacheFactory.getLock(nodeID, serversCache);
-        try {
-            serverLock.lock();
-            List<DomainPair> remoteServerDomains = new ArrayList<>();
-            for (Map.Entry<DomainPair, byte[]> entry : serversCache.entrySet()) {
-                if (Arrays.equals(entry.getValue(), nodeID)) {
-                    remoteServerDomains.add(entry.getKey());
-                }
-            }
-            for (DomainPair pair : remoteServerDomains) {
-                removeServerRoute(pair);
-            }
-        }
-        finally {
-            serverLock.unlock();
-        }
-        
-        // remove component routes for the defunct node
-        Lock componentLock = CacheFactory.getLock(nodeID, componentsCache);
-        try {
-            componentLock.lock();
-            Map<String, NodeID> remoteComponents = new HashMap<>();
-            NodeID nodeIDInstance = NodeID.getInstance( nodeID );
-            for (Map.Entry<String, HashSet<NodeID>> entry : componentsCache.entrySet()) {
-                if (entry.getValue().contains(nodeIDInstance)) {
-                    remoteComponents.put(entry.getKey(), nodeIDInstance);
-                }
-            }
-            for (Map.Entry<String, NodeID> entry : remoteComponents.entrySet()) {
-                removeComponentRoute(new JID(entry.getKey()), entry.getValue());
-            }
-        }
-        finally {
-            componentLock.unlock();
-        }
+            });
+        Log.debug( "Cluster node {} just left the cluster. A total of {} client sessions was living there, and are no longer available.", NodeID.getInstance( nodeID ), removedSessionCount.get() );
+
+        // Remove routes for server domains that were accessed through the defunct node.
+        final Set<DomainPair> removedServers = CacheUtil.removeValueFromCache( serversCache, NodeID.getInstance( nodeID ) );
+        removedServers.forEach( removedServer -> {
+            Log.debug( "Cluster node {} just left the cluster, and was the only node on which the outgoing server route to '{}' was living. This route was removed.", NodeID.getInstance( nodeID ), removedServer.getRemote() );
+        } );
+
+        // Remove component routes for the defunct node.
+        final Map<Boolean, Map<String, HashSet<NodeID>>> modifiedComponents = CacheUtil.removeValueFromMultiValuedCache( componentsCache, NodeID.getInstance( nodeID ) );
+        modifiedComponents.get( false ).keySet().forEach( removedComponentDomain -> {
+            Log.debug( "Cluster node {} just left the cluster, and was the only node on which the external component session for '{}' was living. This route was removed", NodeID.getInstance( nodeID ), removedComponentDomain );
+        } );
     }
 
     @Override
@@ -1140,23 +1190,26 @@ public class RoutingTableImpl extends BasicModule implements RoutingTable, Clust
         // Do nothing
     }
 
-    private void restoreCacheContent() {
-        // Add outgoing server sessions hosted locally to the cache (using new nodeID)
-        for (LocalOutgoingServerSession session : localRoutingTable.getServerRoutes()) {
-            for (DomainPair pair : session.getOutgoingDomainPairs()) {
-                addServerRoute(pair, session);
-            }
-        }
+    /**
+     * When the local node is joining or leaving a cluster, {@link org.jivesoftware.util.cache.CacheFactory} will swap
+     * the implementation used to instantiate caches. This causes the cache content to be 'reset': it will no longer
+     * contain the data that's provided by the local node. This method restores data that's provided by the local node
+     * in the cache. It is expected to be invoked right after joining ({@link #joinedCluster()} or leaving
+     * ({@link #leftCluster()} a cluster.
+     */
+    private void restoreCacheContent()
+    {
+        Log.trace( "Restoring cache content for cache '{}' by adding all outgoing server routes that are connected to the local cluster node.", serversCache.getName() );
+        localRoutingTable.getServerRoutes().forEach( route -> route.getOutgoingDomainPairs().forEach( address -> serversCache.put( address, server.getNodeID()) ) );
 
-        // Add component sessions hosted locally to the cache (using new nodeID) and remove traces to old nodeID
-        for (RoutableChannelHandler route : localRoutingTable.getComponentRoute()) {
-            addComponentRoute(route.getAddress(), route);
-        }
+        Log.trace( "Restoring cache content for cache '{}' by adding all component routes that are connected to the local cluster node.", componentsCache.getName() );
+        localRoutingTable.getComponentRoute().forEach( route -> CacheUtil.addValueToMultiValuedCache( componentsCache, route.getAddress().getDomain(), server.getNodeID(), HashSet::new ));
+
+        Log.trace( "Restoring cache content for cache '{}', '{}' and '{}' by adding all client routes that are connected to the local cluster node.", usersCache.getName(), anonymousUsersCache.getName(), usersSessions.getName() );
 
         // Add client sessions hosted locally to the cache (using new nodeID)
         for (LocalClientSession session : localRoutingTable.getClientRoutes()) {
             addClientRoute(session.getAddress(), session);
         }
     }
-
 }

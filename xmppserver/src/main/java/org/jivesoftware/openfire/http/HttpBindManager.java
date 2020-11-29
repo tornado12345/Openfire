@@ -17,10 +17,7 @@
 package org.jivesoftware.openfire.http;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import org.apache.jasper.servlet.JasperInitializer;
 import org.apache.tomcat.InstanceManager;
@@ -158,7 +155,7 @@ public final class HttpBindManager implements CertificateEventListener, Property
      * A task that, periodically, updates the 'last modified' date of all files in the Jetty 'tmp' directories. This
      * prevents operating systems from removing files that are deemed unused.
      *
-     * @see <a href="https://issues.igniterealtime.org/browse/OF-1534">OF-1534</a>
+     * @see <a href="https://igniterealtime.atlassian.net/browse/OF-1534">OF-1534</a>
      */
     private TempFileToucherTask tempFileToucherTask;
 
@@ -189,7 +186,6 @@ public final class HttpBindManager implements CertificateEventListener, Property
         // Setup the default handlers. Order is important here. First, evaluate if the 'standard' handlers can be used to fulfill requests.
         this.handlerList.addHandler( createBoshHandler() );
         this.handlerList.addHandler( createWebsocketHandler() );
-        this.handlerList.addHandler( createCrossDomainHandler() );
 
         // When standard handling does not apply, see if any of the handlers in the extension pool of handlers applies to the request.
         this.handlerList.addHandler( this.extensionHandlers );
@@ -239,7 +235,27 @@ public final class HttpBindManager implements CertificateEventListener, Property
 
         try {
             httpBindServer.start();
+
+            if (handlerList.getHandlers() != null) {
+                Arrays.stream(handlerList.getHandlers()).forEach(handler -> {
+                    try {
+                        handler.start();
+                    } catch (Exception e) {
+                        Log.warn("An exception occurred while trying to start handler: {}", handler, e);
+                    }
+                });
+            }
             handlerList.start();
+
+            if ( extensionHandlers.getHandlers() != null ) {
+                Arrays.stream(extensionHandlers.getHandlers()).forEach(handler -> {
+                    try {
+                        handler.start();
+                    } catch (Exception e) {
+                        Log.warn("An exception occurred while trying to start extension handler: {}", handler, e);
+                    }
+                });
+            }
             extensionHandlers.start();
 
             CertificateManager.addListener(this);
@@ -267,8 +283,28 @@ public final class HttpBindManager implements CertificateEventListener, Property
 
         if (httpBindServer != null) {
             try {
-                handlerList.stop();
+                if ( extensionHandlers.getHandlers() != null ) {
+                    Arrays.stream(extensionHandlers.getHandlers()).forEach(handler -> {
+                        try {
+                            handler.stop();
+                        } catch (Exception e) {
+                            Log.warn("An exception occurred while trying to stop extension handler: {}", handler, e);
+                        }
+                    });
+                }
                 extensionHandlers.stop();
+
+                if ( handlerList.getHandlers() != null ) {
+                    Arrays.stream(handlerList.getHandlers()).forEach(handler -> {
+                        try {
+                            handler.stop();
+                        } catch (Exception e) {
+                            Log.warn("An exception occurred while trying to stop handler: {}", handler, e);
+                        }
+                    });
+                }
+                handlerList.stop();
+
                 httpBindServer.stop();
                 Log.info("HTTP bind service stopped");
             }
@@ -291,6 +327,7 @@ public final class HttpBindManager implements CertificateEventListener, Property
         final int port = getHttpBindUnsecurePort();
         if (port > 0) {
             HttpConfiguration httpConfig = new HttpConfiguration();
+            httpConfig.setSendServerVersion( false );
             configureProxiedConnector(httpConfig);
             ServerConnector connector = new ServerConnector(httpBindServer, new HttpConnectionFactory(httpConfig));
 
@@ -324,6 +361,7 @@ public final class HttpBindManager implements CertificateEventListener, Property
                 httpsConfig.setSecurePort(securePort);
                 configureProxiedConnector(httpsConfig);
                 httpsConfig.addCustomizer(new SecureRequestCustomizer());
+                httpsConfig.setSendServerVersion( false );
 
                 final ServerConnector sslConnector = new ServerConnector(httpBindServer, new SslConnectionFactory(sslContextFactory, "http/1.1"), new HttpConnectionFactory(httpsConfig));
                 sslConnector.setHost(getBindInterface());
@@ -649,35 +687,6 @@ public final class HttpBindManager implements CertificateEventListener, Property
         final ConnectionManagerImpl connectionManager = ((ConnectionManagerImpl) XMPPServer.getInstance().getConnectionManager());
         final ConnectionConfiguration configuration = connectionManager.getListener( ConnectionType.BOSH_C2S, true ).generateConnectionConfiguration();
         return configuration.getCompressionPolicy() == null || configuration.getCompressionPolicy().equals( Connection.CompressionPolicy.optional );
-    }
-
-    /**
-     * Creates a Jetty context handler that can be used to expose the cross-domain functionality as implemented by
-     * {@link FlashCrossDomainServlet}.
-     *
-     * Note that an invocation of this method will not register the handler (and thus make the related functionality
-     * available to the end user). Instead, the created handler is returned by this method, and will need to be
-     * registered with the embedded Jetty webserver by the caller.
-     *
-     * @return A Jetty context handler (never null).
-     */
-    protected Handler createCrossDomainHandler()
-    {
-        final ServletContextHandler context = new ServletContextHandler( null, "/crossdomain.xml", ServletContextHandler.SESSIONS );
-
-        // Ensure the JSP engine is initialized correctly (in order to be able to cope with Tomcat/Jasper precompiled JSPs).
-        final List<ContainerInitializer> initializers = new ArrayList<>();
-        initializers.add( new ContainerInitializer( new JasperInitializer(), null ) );
-        context.setAttribute( "org.eclipse.jetty.containerInitializers", initializers );
-        context.setAttribute( InstanceManager.class.getName(), new SimpleInstanceManager() );
-
-        // Generic configuration of the context.
-        context.setAllowNullPathInfo( true );
-
-        // Add the functionality-providers.
-        context.addServlet( new ServletHolder( new FlashCrossDomainServlet() ), "" );
-
-        return context;
     }
 
     /**

@@ -26,6 +26,7 @@ import org.jivesoftware.openfire.RoutingTable;
 import org.jivesoftware.openfire.auth.UnauthorizedException;
 import org.jivesoftware.openfire.interceptor.PacketRejectedException;
 import org.jivesoftware.openfire.session.LocalIncomingServerSession;
+import org.jivesoftware.openfire.event.ServerSessionEventDispatcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xmlpull.v1.XmlPullParserException;
@@ -44,7 +45,7 @@ import org.xmpp.packet.StreamError;
  *
  * The received packets will be routed using another thread to ensure that many received packets
  * could be routed at the same time. To avoid creating new threads every time a packet is received
- * each <tt>ServerSocketReader</tt> instance uses a {@link ThreadPoolExecutor}. By default the
+ * each {@code ServerSocketReader} instance uses a {@link ThreadPoolExecutor}. By default the
  * maximum number of threads that the executor may have is 50. However, this value may be modified
  * by changing the property <b>xmpp.server.processing.max.threads</b>.
  *
@@ -192,6 +193,8 @@ public class ServerSocketReader extends SocketReader {
         if ("jabber:server".equals(namespace)) {
             // The connected client is a server so create an IncomingServerSession
             session = LocalIncomingServerSession.createSession(serverName, reader, connection, directTLS);
+            // After the session has been created, inform all listeners as well.
+            ServerSessionEventDispatcher.dispatchEvent(session, ServerSessionEventDispatcher.EventType.session_created);
             return true;
         }
         return false;

@@ -59,10 +59,7 @@ import org.jivesoftware.openfire.session.LocalIncomingServerSession;
 import org.jivesoftware.openfire.session.LocalSession;
 import org.jivesoftware.openfire.session.Session;
 import org.jivesoftware.openfire.spi.ConnectionType;
-import org.jivesoftware.util.CertificateManager;
-import org.jivesoftware.util.JiveGlobals;
-import org.jivesoftware.util.PropertyEventListener;
-import org.jivesoftware.util.StringUtils;
+import org.jivesoftware.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -85,6 +82,12 @@ import org.slf4j.LoggerFactory;
 public class SASLAuthentication {
 
     private static final Logger Log = LoggerFactory.getLogger(SASLAuthentication.class);
+
+    public static final SystemProperty<Boolean> SKIP_PEER_CERT_REVALIDATION_CLIENT = SystemProperty.Builder.ofType(Boolean.class)
+        .setKey("xmpp.auth.external.client.skip-cert-revalidation")
+        .setDynamic(true)
+        .setDefaultValue(false)
+        .build();
 
     // http://stackoverflow.com/questions/8571501/how-to-check-whether-the-string-is-base64-encoded-or-not
     // plus an extra regex alternative to catch a single equals sign ('=', see RFC 6120 6.4.2)
@@ -193,11 +196,13 @@ public class SASLAuthentication {
     {
         if ( session instanceof ClientSession )
         {
-            return getSASLMechanismsElement( (ClientSession) session ).asXML();
+            final Element result = getSASLMechanismsElement( (ClientSession) session );
+            return result == null ? "" : result.asXML();
         }
         else if ( session instanceof LocalIncomingServerSession )
         {
-            return getSASLMechanismsElement( (LocalIncomingServerSession) session ).asXML();
+            final Element result = getSASLMechanismsElement( (LocalIncomingServerSession) session );
+            return result == null ? "" : result.asXML();
         }
         else
         {
@@ -213,9 +218,15 @@ public class SASLAuthentication {
             if (mech.equals("EXTERNAL")) {
                 boolean trustedCert = false;
                 if (session.isSecure()) {
-                    final Connection connection   = ( (LocalClientSession) session ).getConnection();
-                    final TrustStore trustStore   = connection.getConfiguration().getTrustStore();
-                    trustedCert = trustStore.isTrusted( connection.getPeerCertificates() );
+                    final Connection connection = ( (LocalClientSession) session ).getConnection();
+                    if ( SKIP_PEER_CERT_REVALIDATION_CLIENT.getValue() ) {
+                        // Trust that the peer certificate has been validated when TLS got established.
+                        trustedCert = connection.getPeerCertificates() != null && connection.getPeerCertificates().length > 0;
+                    } else {
+                        // Re-evaluate the validity of the peer certificate.
+                        final TrustStore trustStore = connection.getConfiguration().getTrustStore();
+                        trustedCert = trustStore.isTrusted( connection.getPeerCertificates() );
+                    }
                 }
                 if ( !trustedCert ) {
                     continue; // Do not offer EXTERNAL.
@@ -224,6 +235,12 @@ public class SASLAuthentication {
             final Element mechanism = result.addElement("mechanism");
             mechanism.setText(mech);
         }
+
+        // OF-2072: Return null instead of an empty element, if so configured.
+        if ( JiveGlobals.getBooleanProperty("sasl.client.suppressEmpty", false) && result.elements().isEmpty() ) {
+            return null;
+        }
+
         return result;
     }
 
@@ -244,6 +261,11 @@ public class SASLAuthentication {
                 final Element mechanism = result.addElement("mechanism");
                 mechanism.setText("EXTERNAL");
             }
+        }
+
+        // OF-2072: Return null instead of an empty element, if so configured.
+        if ( JiveGlobals.getBooleanProperty("sasl.server.suppressEmpty", false) && result.elements().isEmpty() ) {
+            return null;
         }
         return result;
     }
@@ -296,7 +318,7 @@ public class SASLAuthentication {
                     // Construct the configuration properties
                     final Map<String, Object> props = new HashMap<>();
                     props.put( LocalSession.class.getCanonicalName(), session );
-                    props.put(Sasl.POLICY_NOANONYMOUS, AnonymousSaslServer.ENABLED.getValue().toString());
+                    props.put(Sasl.POLICY_NOANONYMOUS, Boolean.toString(!AnonymousSaslServer.ENABLED.getValue()));
                     props.put( "com.sun.security.sasl.digest.realm", serverInfo.getXMPPDomain() );
 
                     SaslServer saslServer = Sasl.createSaslServer( mechanismName, "xmpp", serverName, props, new XMPPCallbackHandler() );
@@ -624,7 +646,7 @@ public class SASLAuthentication {
 
     /**
      * Returns a collection of mechanism names for which the JVM has an implementation available.
-     * <p/>
+     * <p>
      * Note that this need not (and likely will not) correspond with the list of mechanisms that is offered to XMPP
      * peer entities, which is provided by #getSupportedMechanisms.
      *

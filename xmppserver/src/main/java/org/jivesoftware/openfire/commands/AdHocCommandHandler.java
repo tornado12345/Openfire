@@ -29,6 +29,7 @@ import org.jivesoftware.openfire.commands.admin.user.AuthenticateUser;
 import org.jivesoftware.openfire.commands.admin.user.ChangeUserPassword;
 import org.jivesoftware.openfire.commands.admin.user.UserProperties;
 import org.jivesoftware.openfire.commands.event.*;
+import org.jivesoftware.openfire.commands.generic.Ping;
 import org.jivesoftware.openfire.disco.*;
 import org.jivesoftware.openfire.handler.IQHandler;
 import org.xmpp.forms.DataForm;
@@ -46,11 +47,11 @@ import java.util.*;
  * user will complete a data form and send it back to the server. The data entered by the user is
  * kept in a SessionData. Instances of {@link AdHocCommand} are stateless. In order to prevent
  * "bad" users from consuming all system memory there exists a limit of simultaneous commands that
- * a user might perform. Configure the system property <tt>"xmpp.command.limit"</tt> to control
+ * a user might perform. Configure the system property {@code "xmpp.command.limit"} to control
  * this limit. User sessions will also timeout and their data destroyed if they have not been
  * executed within a time limit since the session was created. The default timeout value is 10
  * minutes. The timeout value can be modified by setting the system property
- * <tt>"xmpp.command.timeout"</tt>.<p>
+ * {@code "xmpp.command.timeout"}.<p>
  *
  * New commands can be added dynamically by sending the message {@link #addCommand(AdHocCommand)}.
  * The command will immediatelly appear in the disco#items list and might be executed by those
@@ -109,6 +110,11 @@ public class AdHocCommandHandler extends IQHandler
     @Override
     public DataForm getExtendedInfo(String name, String node, JID senderJID) {
         return null;
+    }
+    
+    @Override
+    public Set<DataForm> getExtendedInfos(String name, String node, JID senderJID) {
+        return new HashSet<DataForm>();
     }
 
     @Override
@@ -230,6 +236,7 @@ public class AdHocCommandHandler extends IQHandler
         addCommand(new VCardDeleting());
         addCommand(new VCardModified());
         addCommand(new GetAdminConsoleInfo());
+        addCommand(new Ping());
     }
 
     private void startCommand(AdHocCommand command) {

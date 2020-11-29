@@ -90,7 +90,7 @@
 
         for ( final ConnectionType connectionType : toUpdate )
         {
-            if ( connectionType == SOCKET_C2S || (connectionType.getFallback() != null && connectionType.getFallback() == SOCKET_C2S ) )
+            if ( connectionType.isClientOriented() )
             {
                 if ( locTrustC2S == null || locTrustC2S.isEmpty() )
                 {
@@ -121,7 +121,7 @@
                 {
                     final String locTrust;
                     final String pwdTrust;
-                    if ( connectionType == SOCKET_C2S || (connectionType.getFallback() != null && connectionType.getFallback() == SOCKET_C2S) )
+                    if ( connectionType.isClientOriented() )
                     {
                         locTrust = locTrustC2S;
                         pwdTrust = pwdTrustC2S;
@@ -135,8 +135,8 @@
                     final File backupKey = new File( CertificateStoreManager.getIdentityStoreBackupDirectory( connectionType ) );
                     final File backupTrust = new File( CertificateStoreManager.getTrustStoreBackupDirectory( connectionType ) );
 
-                    final CertificateStoreConfiguration configKey = new CertificateStoreConfiguration( "jks", new File( locKey ), pwdKey.toCharArray(), backupKey );
-                    final CertificateStoreConfiguration configTrust = new CertificateStoreConfiguration( "jks", new File( locTrust ), pwdTrust.toCharArray(), backupTrust );
+                    final CertificateStoreConfiguration configKey = new CertificateStoreConfiguration( CertificateStoreManager.getIdentityStoreType(connectionType), new File( locKey ), pwdKey.toCharArray(), backupKey );
+                    final CertificateStoreConfiguration configTrust = new CertificateStoreConfiguration( CertificateStoreManager.getTrustStoreType(connectionType), new File( locTrust ), pwdTrust.toCharArray(), backupTrust );
                     certificateStoreManager.replaceIdentityStore( connectionType, configKey, false );
                     certificateStoreManager.replaceTrustStore( connectionType, configTrust, false );
                 }
